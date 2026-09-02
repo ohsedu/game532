@@ -1,0 +1,177 @@
+@import "tailwindcss";
+
+/* ARCADE theme: dark, neon-on-slate, monospace-forward. Single fixed theme -
+   the site is deliberately dark-only, so no prefers-color-scheme swap. */
+@theme {
+  --color-bg: #07080d;
+  --color-bg-raised: #0d0f18;
+  --color-bg-card: #11141f;
+  --color-line: #1e2334;
+  --color-line-bright: #2c3350;
+
+  --color-ink: #e8ecf7;
+  --color-ink-dim: #98a1bd;
+  --color-ink-faint: #5c6584;
+
+  --color-accent: #22d3ee;
+  --color-dodge: #22d3ee;
+  --color-poop: #f59e0b;
+  --color-direction: #f43f5e;
+
+  --color-gold: #fbbf24;
+  --color-silver: #cbd5e1;
+  --color-bronze: #d08c5a;
+
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
+html {
+  color-scheme: dark;
+}
+
+body {
+  background-color: var(--color-bg);
+  color: var(--color-ink);
+  font-family: var(--font-mono);
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Ambient backdrop: faint grid + two colored glows. Fixed so it does not
+   scroll with content. */
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: -2;
+  background-image:
+    linear-gradient(to right, rgba(255, 255, 255, 0.028) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(255, 255, 255, 0.028) 1px, transparent 1px);
+  background-size: 44px 44px;
+}
+
+body::after {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  background:
+    radial-gradient(700px circle at 12% 8%, rgba(34, 211, 238, 0.1), transparent 60%),
+    radial-gradient(600px circle at 88% 92%, rgba(244, 63, 94, 0.09), transparent 60%);
+}
+
+@layer utilities {
+  .text-glow {
+    text-shadow: 0 0 18px currentColor;
+  }
+
+  /* Scanline sheen used on the game frame and game cards. */
+  .scanlines {
+    position: relative;
+  }
+  .scanlines::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    background: repeating-linear-gradient(
+      to bottom,
+      rgba(255, 255, 255, 0.022) 0px,
+      rgba(255, 255, 255, 0.022) 1px,
+      transparent 1px,
+      transparent 3px
+    );
+  }
+
+  .tabular {
+    font-variant-numeric: tabular-nums;
+  }
+}
+
+@keyframes arcade-pop {
+  0% {
+    transform: scale(0.94);
+    opacity: 0;
+  }
+  60% {
+    transform: scale(1.015);
+  }
+  100% {
+    transform: scale(1);
+    opacity: 1;
+  }
+}
+
+@keyframes arcade-rise {
+  from {
+    transform: translateY(10px);
+    opacity: 0;
+  }
+  to {
+    transform: translateY(0);
+    opacity: 1;
+  }
+}
+
+@keyframes arcade-blink {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.35;
+  }
+}
+
+@keyframes arcade-shimmer {
+  from {
+    background-position: -200% 0;
+  }
+  to {
+    background-position: 200% 0;
+  }
+}
+
+.animate-pop {
+  animation: arcade-pop 0.26s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+.animate-rise {
+  animation: arcade-rise 0.34s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+.animate-blink {
+  animation: arcade-blink 1.1s ease-in-out infinite;
+}
+
+/* Records get a moving gradient sweep so a new best reads as an event. */
+.animate-shimmer {
+  background: linear-gradient(
+    90deg,
+    var(--color-gold) 0%,
+    #fff8dc 40%,
+    var(--color-gold) 80%
+  );
+  background-size: 200% auto;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  animation: arcade-shimmer 2.2s linear infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-pop,
+  .animate-rise,
+  .animate-blink,
+  .animate-shimmer {
+    animation: none;
+  }
+}
+
+::selection {
+  background: var(--color-accent);
+  color: #04121a;
+}
+
+/* Scrollbar, so the ranking list does not break the dark frame. */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-line-bright) transparent;
+}
