@@ -10,49 +10,76 @@ interface GameHUDProps {
   stats: HudStat[];
   accent: string;
   muted: boolean;
+  paused: boolean;
   onToggleMute: () => void;
+  onTogglePause: () => void;
 }
 
 /**
  * Overlays the canvas. Re-renders only when the score or a stat actually
- * changes - BaseGame publishes on integer change, not per frame.
+ * changes — BaseGame publishes on integer change, not per frame.
  */
-function GameHUD({ score, best, stats, accent, muted, onToggleMute }: GameHUDProps) {
+function GameHUD({
+  score,
+  best,
+  stats,
+  accent,
+  muted,
+  paused,
+  onToggleMute,
+  onTogglePause,
+}: GameHUDProps) {
   const beatingBest = best > 0 && score > best;
 
   return (
-    <div className="pointer-events-none absolute inset-x-0 top-0 flex items-start justify-between gap-4 p-4 sm:p-5">
-      <div>
-        <p className="text-[10px] font-bold tracking-[0.28em] text-ink-faint">SCORE</p>
+    <div className="pointer-events-none absolute inset-x-0 top-0 flex items-start justify-between gap-3 p-4">
+      <div className="rounded-2xl bg-white/80 px-4 py-2.5 shadow-sm backdrop-blur-sm">
+        <p className="text-[10px] leading-none text-ink-faint">SCORE</p>
         <p
-          className="tabular text-3xl font-black leading-none sm:text-4xl"
+          className="num mt-1 text-2xl font-semibold leading-none sm:text-3xl"
           style={{ color: beatingBest ? "var(--color-gold)" : accent }}
         >
           {formatScore(score)}
         </p>
-        <p className="tabular mt-1.5 text-[11px] text-ink-faint">
+        <p className="num mt-1.5 text-[11px] leading-none text-ink-faint">
           BEST {best > 0 ? formatScore(best) : "—"}
-          {beatingBest ? <span className="ml-2 text-gold animate-blink">NEW!</span> : null}
+          {beatingBest ? (
+            <span className="animate-blink ml-1.5 text-gold">신기록!</span>
+          ) : null}
         </p>
       </div>
 
-      <div className="flex items-start gap-4">
-        {stats.map((s) => (
-          <div key={s.label} className="text-right">
-            <p className="text-[10px] font-bold tracking-[0.2em] text-ink-faint">{s.label}</p>
-            <p
-              className="tabular text-lg font-bold leading-tight"
-              style={{ color: s.highlight ? accent : "var(--color-ink)" }}
-            >
-              {s.value}
-            </p>
+      <div className="flex items-start gap-2">
+        {stats.length > 0 ? (
+          <div className="flex gap-4 rounded-2xl bg-white/80 px-4 py-2.5 shadow-sm backdrop-blur-sm">
+            {stats.map((s) => (
+              <div key={s.label} className="text-right">
+                <p className="text-[10px] leading-none text-ink-faint">{s.label}</p>
+                <p
+                  className="num mt-1 text-base font-semibold leading-none"
+                  style={{ color: s.highlight ? accent : "var(--color-ink)" }}
+                >
+                  {s.value}
+                </p>
+              </div>
+            ))}
           </div>
-        ))}
+        ) : null}
+
+        <button
+          type="button"
+          onClick={onTogglePause}
+          className="pointer-events-auto flex h-10 w-10 items-center justify-center rounded-full bg-white/85 text-sm shadow-sm backdrop-blur-sm transition-colors hover:bg-white"
+          aria-label={paused ? "계속하기" : "일시정지"}
+          title={paused ? "계속하기 (ESC)" : "일시정지 (ESC)"}
+        >
+          {paused ? "▶" : "⏸"}
+        </button>
 
         <button
           type="button"
           onClick={onToggleMute}
-          className="pointer-events-auto rounded-md border border-line px-2.5 py-1.5 text-xs text-ink-dim transition-colors hover:border-line-bright hover:text-ink"
+          className="pointer-events-auto flex h-10 w-10 items-center justify-center rounded-full bg-white/85 text-sm shadow-sm backdrop-blur-sm transition-colors hover:bg-white"
           aria-label={muted ? "소리 켜기" : "소리 끄기"}
           title={muted ? "소리 켜기" : "소리 끄기"}
         >

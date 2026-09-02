@@ -33,12 +33,14 @@ export default function GameOver({
   durationMs,
   onRestart,
 }: GameOverProps) {
-  const [nickname, setNickname] = useState("");
+  // This panel only ever mounts after a run ends, so it never renders on the
+  // server — reading storage in the initializer cannot cause a hydration
+  // mismatch, and avoids a wasted render pass.
+  const [nickname, setNickname] = useState(getSavedNickname);
   const [state, setState] = useState<SubmitState>({ kind: "idle" });
   const inputRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
-    setNickname(getSavedNickname());
     // Focus the field so a player can type straight into it, but only after the
     // panel has animated in.
     const id = requestAnimationFrame(() => inputRef.current?.focus());
@@ -90,45 +92,47 @@ export default function GameOver({
   const submitted = state.kind === "done";
 
   return (
-    <div className="absolute inset-0 z-10 flex items-center justify-center bg-bg/82 backdrop-blur-[3px]">
-      <div className="animate-pop w-full max-w-sm px-6 text-center">
-        <p className="text-[11px] font-bold tracking-[0.42em] text-ink-faint">GAME OVER</p>
-
+    <div className="absolute inset-0 z-10 flex items-center justify-center overflow-y-auto bg-white/75 py-6 backdrop-blur-[3px]">
+      <div className="animate-pop card w-full max-w-sm px-7 py-8 text-center">
         {isNewRecord ? (
-          <p className="animate-shimmer mt-3 text-xl font-black tracking-[0.16em]">
-            ★ NEW RECORD ★
-          </p>
-        ) : null}
+          <>
+            <div className="animate-bob text-4xl" aria-hidden="true">
+              🎉
+            </div>
+            <p className="animate-shimmer mt-2 text-xl">신기록 달성!</p>
+          </>
+        ) : (
+          <>
+            <div className="text-4xl" aria-hidden="true">
+              😵
+            </div>
+            <p className="mt-2 text-xl text-ink">게임 오버</p>
+          </>
+        )}
 
-        <p className="mt-6 text-[10px] font-bold tracking-[0.28em] text-ink-faint">SCORE</p>
-        <p
-          className="tabular text-6xl font-black leading-none text-glow"
-          style={{ color: accent }}
-        >
+        <p className="mt-6 text-[11px] text-ink-faint">SCORE</p>
+        <p className="num text-5xl font-semibold leading-none" style={{ color: accent }}>
           {formatScore(score)}
         </p>
-
-        <p className="tabular mt-4 text-xs text-ink-faint">
-          BEST <span className="text-ink-dim">{formatScore(best)}</span>
-        </p>
+        <p className="num mt-3 text-xs text-ink-faint">BEST {formatScore(best)}</p>
 
         {submitted ? (
-          <div className="mt-7 rounded-lg border border-line bg-bg-raised p-4">
+          <div
+            className="mt-7 rounded-2xl px-4 py-5"
+            style={{ backgroundColor: accent + "14" }}
+          >
             <p className="text-xs text-ink-dim">
-              <span className="font-bold text-ink">{sanitizeNickname(nickname, NICKNAME_MAX)}</span>{" "}
-              등록 완료
+              <span className="text-ink">{sanitizeNickname(nickname, NICKNAME_MAX)}</span> 등록
+              완료!
             </p>
-            <p className="tabular mt-1 text-3xl font-black" style={{ color: accent }}>
-              #{state.rank}
+            <p className="num mt-1 text-3xl font-semibold" style={{ color: accent }}>
+              {state.rank}위
             </p>
           </div>
         ) : (
           <div className="mt-7 text-left">
-            <label
-              htmlFor="nickname"
-              className="text-[10px] font-bold tracking-[0.24em] text-ink-faint"
-            >
-              닉네임
+            <label htmlFor="nickname" className="text-[11px] text-ink-faint">
+              닉네임 (최대 {NICKNAME_MAX}자)
             </label>
             <div className="mt-2 flex gap-2">
               <input
@@ -146,7 +150,7 @@ export default function GameOver({
                   e.stopPropagation();
                   if (e.key === "Enter") void submit();
                 }}
-                className="tabular min-w-0 flex-1 rounded-md border border-line bg-bg px-3 py-2.5 text-sm font-bold text-ink outline-none transition-colors placeholder:text-ink-faint focus:border-line-bright"
+                className="pill min-w-0 flex-1 border border-line bg-surface-2 px-4 py-2.5 text-sm text-ink outline-none transition-colors placeholder:text-ink-faint focus:border-primary"
                 autoComplete="off"
                 spellCheck={false}
               />
@@ -154,19 +158,19 @@ export default function GameOver({
                 type="button"
                 onClick={() => void submit()}
                 disabled={state.kind === "sending"}
-                className="shrink-0 rounded-md px-4 py-2.5 text-xs font-bold tracking-[0.14em] transition-opacity disabled:opacity-50"
-                style={{ backgroundColor: accent, color: "#06080e" }}
+                className="pill shrink-0 px-5 py-2.5 text-sm text-white transition-transform active:scale-95 disabled:opacity-50"
+                style={{ backgroundColor: accent }}
               >
-                {state.kind === "sending" ? "등록 중" : "점수 등록"}
+                {state.kind === "sending" ? "등록 중" : "등록"}
               </button>
             </div>
 
             {state.kind === "error" ? (
-              <p className="mt-2 text-[11px] text-direction">{state.message}</p>
+              <p className="mt-2 px-1 text-[11px] text-direction">{state.message}</p>
             ) : null}
             {state.kind === "unavailable" ? (
-              <p className="mt-2 text-[11px] leading-relaxed text-ink-faint">
-                랭킹 서버가 아직 연결되지 않았습니다. 최고 점수는 이 브라우저에 저장됩니다.
+              <p className="mt-2 px-1 text-[11px] leading-relaxed text-ink-faint">
+                랭킹 서버가 아직 연결되지 않았어요. 최고 점수는 이 브라우저에 저장됩니다.
               </p>
             ) : null}
           </div>
@@ -176,21 +180,21 @@ export default function GameOver({
           <button
             type="button"
             onClick={onRestart}
-            className="rounded-md border px-4 py-3 text-xs font-bold tracking-[0.18em] transition-colors"
-            style={{ borderColor: accent + "66", color: accent }}
+            className="pill px-5 py-3 text-sm text-white transition-transform hover:scale-[1.02] active:scale-95"
+            style={{ backgroundColor: accent }}
           >
             다시하기
           </button>
           <div className="grid grid-cols-2 gap-2">
             <Link
               href={`/ranking?game=${gameId}`}
-              className="rounded-md border border-line px-4 py-3 text-xs font-bold tracking-[0.14em] text-ink-dim transition-colors hover:border-line-bright hover:text-ink"
+              className="pill border border-line bg-surface px-4 py-3 text-sm text-ink-dim transition-colors hover:border-line-strong hover:text-ink"
             >
               랭킹 보기
             </Link>
             <Link
               href="/"
-              className="rounded-md border border-line px-4 py-3 text-xs font-bold tracking-[0.14em] text-ink-dim transition-colors hover:border-line-bright hover:text-ink"
+              className="pill border border-line bg-surface px-4 py-3 text-sm text-ink-dim transition-colors hover:border-line-strong hover:text-ink"
             >
               게임 선택
             </Link>

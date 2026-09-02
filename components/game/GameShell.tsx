@@ -5,10 +5,13 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { GameMeta } from "@/types/game";
 import type { HudStat } from "@/games/core/BaseGame";
 import type { AudioManager } from "@/games/core/AudioManager";
-import { commitBest, getBest } from "@/lib/localBest";
+import { commitBest } from "@/lib/localBest";
+import { useLocalBest } from "@/lib/useLocalBest";
+import { formatScore } from "@/lib/format";
 import GameCanvas from "./GameCanvas";
 import GameHUD from "./GameHUD";
 import GameOver from "./GameOver";
+import GamePause from "./GamePause";
 
 type Phase = "ready" | "playing" | "over";
 
@@ -16,36 +19,70 @@ const EMPTY_STATS: HudStat[] = [];
 
 export default function GameShell({ meta }: { meta: GameMeta }) {
   const [phase, setPhase] = useState<Phase>("ready");
+  const [paused, setPaused] = useState(false);
   const [runId, setRunId] = useState(0);
   const [score, setScore] = useState(0);
   const [stats, setStats] = useState<HudStat[]>(EMPTY_STATS);
-  const [best, setBest] = useState(0);
   const [isNewRecord, setIsNewRecord] = useState(false);
   const [muted, setMuted] = useState(false);
+  const [durationMs, setDurationMs] = useState(0);
+
+  // Best score is external (localStorage), so it is subscribed to rather than
+  // copied into state. commitBest notifies this subscription.
+  const best = useLocalBest(meta.id);
 
   const audioRef = useRef<AudioManager | null>(null);
   const startedAtRef = useRef(0);
-  const durationRef = useRef(0);
-
-  useEffect(() => {
-    setBest(getBest(meta.id));
-  }, [meta.id]);
+  const pausedAtRef = useRef(0);
+  const overTimerRef = useRef(0);
+  // True from the moment the player dies, before the panel appears. Stops ESC
+  // from pausing during the death animation.
+  const endingRef = useRef(false);
 
   const begin = useCallback(() => {
     audioRef.current?.unlock();
     audioRef.current?.play("click");
+    if (overTimerRef.current) window.clearTimeout(overTimerRef.current);
+    endingRef.current = false;
     startedAtRef.current = performance.now();
     setScore(0);
     setStats(EMPTY_STATS);
     setIsNewRecord(false);
+    setDurationMs(0);
+    setPaused(false);
     setPhase("playing");
     setRunId((n) => n + 1);
   }, []);
 
-  // Any arrow key (or Enter/Space) starts a run from the ready screen.
+  const resume = useCallback(() => {
+    audioRef.current?.play("click");
+    // Paused time must not count toward the run, or the score-vs-duration check
+    // on the server would see an implausibly long, low-scoring run.
+    if (pausedAtRef.current) {
+      startedAtRef.current += performance.now() - pausedAtRef.current;
+      pausedAtRef.current = 0;
+    }
+    setPaused(false);
+  }, []);
+
+  const pause = useCallback(() => {
+    audioRef.current?.play("click");
+    pausedAtRef.current = performance.now();
+    setPaused(true);
+  }, []);
+
+  // ESC toggles pause during play. Any arrow (or Enter/Space) starts a run from
+  // the ready screen.
   useEffect(() => {
-    if (phase !== "ready") return;
     const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        if (phase !== "playing" || endingRef.current) return;
+        e.preventDefault();
+        if (paused) resume();
+        else pause();
+        return;
+      }
+      if (phase !== "ready") return;
       if (
         e.key === "ArrowUp" ||
         e.key === "ArrowDown" ||
@@ -60,17 +97,34 @@ export default function GameShell({ meta }: { meta: GameMeta }) {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [phase, begin]);
+  }, [phase, paused, begin, pause, resume]);
+
+  // Losing focus mid-run pauses rather than letting the player die off-screen.
+  useEffect(() => {
+    if (phase !== "playing") return;
+    const onBlur = () => {
+      if (endingRef.current || pausedAtRef.current) return;
+      pausedAtRef.current = performance.now();
+      setPaused(true);
+    };
+    window.addEventListener("blur", onBlur);
+    return () => window.removeEventListener("blur", onBlur);
+  }, [phase]);
+
+  useEffect(() => {
+    return () => {
+      if (overTimerRef.current) window.clearTimeout(overTimerRef.current);
+    };
+  }, []);
 
   const handleGameOver = useCallback(
     (finalScore: number) => {
-      durationRef.current = performance.now() - startedAtRef.current;
-      const record = commitBest(meta.id, finalScore);
-      setIsNewRecord(record);
-      if (record) setBest(finalScore);
+      endingRef.current = true;
+      setDurationMs(performance.now() - startedAtRef.current);
+      setIsNewRecord(commitBest(meta.id, finalScore));
       setScore(finalScore);
       // Let the death animation read before the panel covers it.
-      window.setTimeout(() => setPhase("over"), 620);
+      overTimerRef.current = window.setTimeout(() => setPhase("over"), 620);
     },
     [meta.id]
   );
@@ -89,39 +143,46 @@ export default function GameShell({ meta }: { meta: GameMeta }) {
 
   return (
     <main className="mx-auto flex w-full max-w-[1000px] flex-1 flex-col px-4 py-6 sm:px-6">
-      <nav className="mb-4 flex items-center justify-between text-xs">
+      <nav className="mb-4 flex items-center justify-between gap-3">
         <Link
           href="/"
-          className="text-ink-faint transition-colors hover:text-ink"
-          aria-label="게임 선택으로"
+          className="pill border border-line bg-surface px-4 py-2 text-xs text-ink-dim transition-colors hover:border-line-strong hover:text-ink"
         >
-          ← ARCADE
+          ← 게임 선택
         </Link>
-        <p className="font-bold tracking-[0.22em]" style={{ color: meta.accent }}>
-          GAME {meta.no} · {meta.title}
+        <p className="truncate text-sm" style={{ color: meta.accent }}>
+          GAME {meta.no} · {meta.titleKo}
         </p>
-        <Link href={`/ranking?game=${meta.id}`} className="text-ink-faint transition-colors hover:text-ink">
-          RANKING →
+        <Link
+          href={`/ranking?game=${meta.id}`}
+          className="pill border border-line bg-surface px-4 py-2 text-xs text-ink-dim transition-colors hover:border-line-strong hover:text-ink"
+        >
+          랭킹 →
         </Link>
       </nav>
 
       <div
-        className="scanlines relative w-full overflow-hidden rounded-xl border bg-bg-raised"
-        style={{ aspectRatio: "1000 / 700", borderColor: meta.accent + "33" }}
+        className="card relative w-full overflow-hidden p-0"
+        style={{ aspectRatio: "1000 / 700" }}
       >
         {phase === "ready" ? (
-          <div className="absolute inset-0 flex flex-col items-center justify-center px-8 text-center">
-            <p className="text-[11px] font-bold tracking-[0.42em] text-ink-faint">
-              GAME {meta.no}
-            </p>
-            <h1
-              className="mt-3 text-4xl font-black tracking-tight text-glow sm:text-5xl"
-              style={{ color: meta.accent }}
+          <div
+            className="absolute inset-0 flex flex-col items-center justify-center px-8 text-center"
+            style={{
+              background: `radial-gradient(620px circle at 50% 0%, ${meta.accent}1f, transparent 68%)`,
+            }}
+          >
+            <span
+              className="pill px-4 py-1.5 text-xs"
+              style={{ backgroundColor: meta.accent + "22", color: meta.accent }}
             >
+              GAME {meta.no}
+            </span>
+            <h1 className="animate-bob mt-5 text-5xl text-ink sm:text-6xl">{meta.titleKo}</h1>
+            <p className="num mt-2 text-sm tracking-widest" style={{ color: meta.accent }}>
               {meta.title}
-            </h1>
-            <p className="mt-2 text-sm font-bold text-ink">{meta.titleKo}</p>
-            <p className="mt-5 max-w-md text-sm leading-relaxed text-ink-dim">
+            </p>
+            <p className="mt-6 max-w-md text-sm leading-relaxed text-ink-dim">
               {meta.description}
             </p>
             <p className="mt-2 text-xs text-ink-faint">{meta.controls}</p>
@@ -129,13 +190,16 @@ export default function GameShell({ meta }: { meta: GameMeta }) {
             <button
               type="button"
               onClick={begin}
-              className="animate-blink mt-10 rounded-md px-8 py-3.5 text-sm font-bold tracking-[0.22em]"
-              style={{ backgroundColor: meta.accent, color: "#06080e" }}
+              className="pill mt-9 px-10 py-4 text-base text-white shadow-lg transition-transform hover:scale-105 active:scale-95"
+              style={{ backgroundColor: meta.accent }}
             >
-              PRESS ANY ARROW
+              시작하기
             </button>
-            <p className="mt-4 text-[11px] text-ink-faint">
-              BEST {best > 0 ? best.toLocaleString("en-US") : "—"}
+            <p className="animate-blink mt-3 text-xs text-ink-faint">
+              아무 방향키나 눌러도 시작돼요
+            </p>
+            <p className="num mt-6 text-xs text-ink-faint">
+              BEST {best > 0 ? formatScore(best) : "—"}
             </p>
           </div>
         ) : (
@@ -143,6 +207,7 @@ export default function GameShell({ meta }: { meta: GameMeta }) {
             <GameCanvas
               gameId={meta.id}
               runId={runId}
+              paused={paused}
               onScore={setScore}
               onStats={setStats}
               onGameOver={handleGameOver}
@@ -154,8 +219,19 @@ export default function GameShell({ meta }: { meta: GameMeta }) {
               stats={stats}
               accent={meta.accent}
               muted={muted}
+              paused={paused}
               onToggleMute={toggleMute}
+              onTogglePause={paused ? resume : pause}
             />
+            {paused && phase === "playing" ? (
+              <GamePause
+                accent={meta.accent}
+                score={score}
+                best={best}
+                onResume={resume}
+                onRestart={begin}
+              />
+            ) : null}
             {phase === "over" ? (
               <GameOver
                 gameId={meta.id}
@@ -163,7 +239,7 @@ export default function GameShell({ meta }: { meta: GameMeta }) {
                 score={score}
                 best={Math.max(best, score)}
                 isNewRecord={isNewRecord}
-                durationMs={durationRef.current}
+                durationMs={durationMs}
                 onRestart={begin}
               />
             ) : null}
@@ -171,8 +247,8 @@ export default function GameShell({ meta }: { meta: GameMeta }) {
         )}
       </div>
 
-      <p className="mt-4 text-center text-[11px] text-ink-faint">
-        ↑ ↓ ← → 로 조작합니다 · 게임 중에는 마우스를 사용하지 않습니다
+      <p className="mt-4 text-center text-xs text-ink-faint">
+        ↑ ↓ ← → 로 조작 · <span className="text-ink-dim">ESC</span> 로 일시정지
       </p>
     </main>
   );

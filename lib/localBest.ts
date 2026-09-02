@@ -31,6 +31,31 @@ export function getAllBest(): BestMap {
   return read();
 }
 
+// --- Subscription -----------------------------------------------------------
+// localStorage is an external store, so React reads it through
+// useSyncExternalStore rather than copying it into state inside an effect.
+// The native `storage` event only fires in OTHER tabs, so writes in this tab
+// notify listeners explicitly.
+
+const listeners = new Set<() => void>();
+
+export function subscribeBest(onChange: () => void): () => void {
+  listeners.add(onChange);
+  if (typeof window !== "undefined") {
+    window.addEventListener("storage", onChange);
+  }
+  return () => {
+    listeners.delete(onChange);
+    if (typeof window !== "undefined") {
+      window.removeEventListener("storage", onChange);
+    }
+  };
+}
+
+function notify(): void {
+  for (const l of listeners) l();
+}
+
 /** Stores `score` if it beats the stored best. Returns true when it is a new record. */
 export function commitBest(id: GameId, score: number): boolean {
   if (typeof window === "undefined") return false;
@@ -43,6 +68,7 @@ export function commitBest(id: GameId, score: number): boolean {
   } catch {
     // Storage unavailable (private mode, quota). The run still counts in memory.
   }
+  notify();
   return true;
 }
 

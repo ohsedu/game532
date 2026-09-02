@@ -42,15 +42,22 @@ export default function GameCanvas({
   const inputRef = useRef<InputManager | null>(null);
   const pausedRef = useRef(paused);
 
-  // Callbacks live in refs so changing them never rebuilds the game.
+  // Callbacks live in refs so changing them never rebuilds the game. Syncing
+  // happens in an effect rather than during render: refs are not render state,
+  // and writing them in the render body breaks under concurrent rendering.
   const onScoreRef = useRef(onScore);
   const onStatsRef = useRef(onStats);
   const onGameOverRef = useRef(onGameOver);
-  onScoreRef.current = onScore;
-  onStatsRef.current = onStats;
-  onGameOverRef.current = onGameOver;
 
-  pausedRef.current = paused;
+  useEffect(() => {
+    onScoreRef.current = onScore;
+    onStatsRef.current = onStats;
+    onGameOverRef.current = onGameOver;
+  }, [onScore, onStats, onGameOver]);
+
+  useEffect(() => {
+    pausedRef.current = paused;
+  }, [paused]);
 
   const resize = useCallback(() => {
     const canvas = canvasRef.current;

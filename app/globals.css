@@ -1,99 +1,98 @@
 @import "tailwindcss";
 
-/* ARCADE theme: dark, neon-on-slate, monospace-forward. Single fixed theme -
-   the site is deliberately dark-only, so no prefers-color-scheme swap. */
+/* ARCADE theme: light, soft, rounded. Point color is indigo; the confetti
+   palette carries the playfulness. Deliberately light-only. */
 @theme {
-  --color-bg: #07080d;
-  --color-bg-raised: #0d0f18;
-  --color-bg-card: #11141f;
-  --color-line: #1e2334;
-  --color-line-bright: #2c3350;
+  --color-bg: #f4f5f8;
+  --color-surface: #ffffff;
+  --color-surface-2: #fafbfd;
+  --color-line: #e9ebf1;
+  --color-line-strong: #dcdfe8;
 
-  --color-ink: #e8ecf7;
-  --color-ink-dim: #98a1bd;
-  --color-ink-faint: #5c6584;
+  --color-ink: #22252d;
+  --color-ink-dim: #6d7280;
+  --color-ink-faint: #a3a8b5;
 
-  --color-accent: #22d3ee;
-  --color-dodge: #22d3ee;
-  --color-poop: #f59e0b;
-  --color-direction: #f43f5e;
+  --color-primary: #5b5fdd;
+  --color-primary-hover: #4b4fd0;
+  --color-primary-soft: #eef0ff;
 
-  --color-gold: #fbbf24;
-  --color-silver: #cbd5e1;
-  --color-bronze: #d08c5a;
+  /* Per-game accents, and the confetti palette they come from. */
+  --color-dodge: #4f8cff;
+  --color-poop: #ffa62b;
+  --color-direction: #ff6b8a;
 
-  --font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  --color-c-pink: #ff6b8a;
+  --color-c-orange: #ffb443;
+  --color-c-green: #4ecb71;
+  --color-c-blue: #4f8cff;
+  --color-c-purple: #a77bff;
+
+  --color-gold: #ffb443;
+  --color-silver: #b9c0cf;
+  --color-bronze: #e0a173;
+
+  /* Everything is round. Cards use 24px, pills use full. */
+  --radius-card: 1.5rem;
+  --radius-soft: 1rem;
+
+  --font-display: var(--font-jua), "Jua", system-ui, sans-serif;
+  --font-sans: var(--font-jua), "Jua", "Apple SD Gothic Neo", "Malgun Gothic",
+    system-ui, sans-serif;
+  --font-num: var(--font-fredoka), "Fredoka", var(--font-jua), system-ui, sans-serif;
 }
 
 html {
-  color-scheme: dark;
+  color-scheme: light;
 }
 
 body {
   background-color: var(--color-bg);
   color: var(--color-ink);
-  font-family: var(--font-mono);
+  font-family: var(--font-sans);
   -webkit-font-smoothing: antialiased;
+  letter-spacing: 0.01em;
 }
 
-/* Ambient backdrop: faint grid + two colored glows. Fixed so it does not
-   scroll with content. */
-body::before {
-  content: "";
-  position: fixed;
-  inset: 0;
-  z-index: -2;
-  background-image:
-    linear-gradient(to right, rgba(255, 255, 255, 0.028) 1px, transparent 1px),
-    linear-gradient(to bottom, rgba(255, 255, 255, 0.028) 1px, transparent 1px);
-  background-size: 44px 44px;
-}
-
+/* Soft color wash in the corners so a white card never floats on flat gray. */
 body::after {
   content: "";
   position: fixed;
   inset: 0;
   z-index: -1;
+  pointer-events: none;
   background:
-    radial-gradient(700px circle at 12% 8%, rgba(34, 211, 238, 0.1), transparent 60%),
-    radial-gradient(600px circle at 88% 92%, rgba(244, 63, 94, 0.09), transparent 60%);
+    radial-gradient(680px circle at 8% 4%, rgba(91, 95, 221, 0.07), transparent 62%),
+    radial-gradient(560px circle at 94% 96%, rgba(255, 107, 138, 0.06), transparent 62%);
 }
 
 @layer utilities {
-  .text-glow {
-    text-shadow: 0 0 18px currentColor;
-  }
-
-  /* Scanline sheen used on the game frame and game cards. */
-  .scanlines {
-    position: relative;
-  }
-  .scanlines::after {
-    content: "";
-    position: absolute;
-    inset: 0;
-    pointer-events: none;
-    background: repeating-linear-gradient(
-      to bottom,
-      rgba(255, 255, 255, 0.022) 0px,
-      rgba(255, 255, 255, 0.022) 1px,
-      transparent 1px,
-      transparent 3px
-    );
-  }
-
-  .tabular {
+  /* Numbers get the rounded numeric face and line up in columns. */
+  .num {
+    font-family: var(--font-num);
     font-variant-numeric: tabular-nums;
+    letter-spacing: 0;
+  }
+
+  .card {
+    background-color: var(--color-surface);
+    border: 1px solid var(--color-line);
+    border-radius: var(--radius-card);
+    box-shadow: 0 1px 2px rgba(24, 28, 45, 0.04), 0 8px 24px rgba(24, 28, 45, 0.05);
+  }
+
+  .pill {
+    border-radius: 9999px;
   }
 }
 
 @keyframes arcade-pop {
   0% {
-    transform: scale(0.94);
+    transform: scale(0.9);
     opacity: 0;
   }
-  60% {
-    transform: scale(1.015);
+  65% {
+    transform: scale(1.025);
   }
   100% {
     transform: scale(1);
@@ -103,12 +102,22 @@ body::after {
 
 @keyframes arcade-rise {
   from {
-    transform: translateY(10px);
+    transform: translateY(12px);
     opacity: 0;
   }
   to {
     transform: translateY(0);
     opacity: 1;
+  }
+}
+
+@keyframes arcade-bob {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-5px);
   }
 }
 
@@ -118,7 +127,7 @@ body::after {
     opacity: 1;
   }
   50% {
-    opacity: 0.35;
+    opacity: 0.45;
   }
 }
 
@@ -131,47 +140,70 @@ body::after {
   }
 }
 
-.animate-pop {
-  animation: arcade-pop 0.26s cubic-bezier(0.22, 1, 0.36, 1) both;
-}
-.animate-rise {
-  animation: arcade-rise 0.34s cubic-bezier(0.22, 1, 0.36, 1) both;
-}
-.animate-blink {
-  animation: arcade-blink 1.1s ease-in-out infinite;
+@keyframes confetti-drift {
+  0%,
+  100% {
+    transform: translateY(0) rotate(var(--rot));
+  }
+  50% {
+    transform: translateY(-14px) rotate(calc(var(--rot) + 12deg));
+  }
 }
 
-/* Records get a moving gradient sweep so a new best reads as an event. */
+.animate-pop {
+  animation: arcade-pop 0.3s cubic-bezier(0.34, 1.56, 0.64, 1) both;
+}
+.animate-rise {
+  animation: arcade-rise 0.38s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+.animate-bob {
+  animation: arcade-bob 2.4s ease-in-out infinite;
+}
+.animate-blink {
+  animation: arcade-blink 1.3s ease-in-out infinite;
+}
+.animate-confetti {
+  animation: confetti-drift var(--dur, 7s) ease-in-out infinite;
+  animation-delay: var(--delay, 0s);
+}
+
 .animate-shimmer {
-  background: linear-gradient(
-    90deg,
-    var(--color-gold) 0%,
-    #fff8dc 40%,
-    var(--color-gold) 80%
-  );
+  background: linear-gradient(90deg, #ffb443 0%, #ff6b8a 35%, #a77bff 70%, #ffb443 100%);
   background-size: 200% auto;
   -webkit-background-clip: text;
   background-clip: text;
   color: transparent;
-  animation: arcade-shimmer 2.2s linear infinite;
+  animation: arcade-shimmer 2.6s linear infinite;
 }
 
 @media (prefers-reduced-motion: reduce) {
   .animate-pop,
   .animate-rise,
+  .animate-bob,
   .animate-blink,
-  .animate-shimmer {
+  .animate-shimmer,
+  .animate-confetti {
     animation: none;
   }
 }
 
 ::selection {
-  background: var(--color-accent);
-  color: #04121a;
+  background: var(--color-primary-soft);
+  color: var(--color-primary);
 }
 
-/* Scrollbar, so the ranking list does not break the dark frame. */
 * {
   scrollbar-width: thin;
-  scrollbar-color: var(--color-line-bright) transparent;
+  scrollbar-color: var(--color-line-strong) transparent;
+}
+
+button,
+a {
+  -webkit-tap-highlight-color: transparent;
+}
+
+:focus-visible {
+  outline: 3px solid var(--color-primary);
+  outline-offset: 3px;
+  border-radius: 9999px;
 }
