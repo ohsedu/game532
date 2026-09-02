@@ -17,7 +17,7 @@ export default function HomePage() {
         </p>
       </header>
 
-      <section className="mt-12 grid gap-7 sm:grid-cols-2 lg:grid-cols-3">
+      <section className="mt-5 grid gap-7 sm:grid-cols-2 lg:grid-cols-3">
         {GAME_LIST.map((meta, i) => (
           <GameCard key={meta.id} meta={meta} index={i} />
         ))}

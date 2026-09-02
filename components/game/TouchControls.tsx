@@ -131,20 +131,27 @@ export default function TouchLayer({
     };
   }, [mode, surfaceRef, setKnob, release]);
 
-  if (mode === "sector") {
-    return (
-      <>
-        <DPad side="left" accent={accent} input={input} disabled={disabled} />
-        <DPad side="right" accent={accent} input={input} disabled={disabled} />
-      </>
-    );
-  }
-
   return (
-    <>
-      <StickView side="left" accent={accent} knobRef={leftKnob} disabled={disabled} />
-      <BoostButton accent={accent} input={input} disabled={disabled} />
-    </>
+    <div className="touch-only pointer-events-none fixed inset-0 z-30 items-center">
+      <div className="flex flex-1 justify-center">
+        {mode === "sector" ? (
+          <DPad accent={accent} input={input} disabled={disabled} />
+        ) : (
+          <StickView accent={accent} knobRef={leftKnob} disabled={disabled} />
+        )}
+      </div>
+
+      {/* Reserves exactly the board is span so the controls never sit over it. */}
+      <div className="shrink-0" style={{ width: "var(--board-w)" }} aria-hidden="true" />
+
+      <div className="flex flex-1 justify-center">
+        {mode === "sector" ? (
+          <DPad accent={accent} input={input} disabled={disabled} />
+        ) : (
+          <BoostButton accent={accent} input={input} disabled={disabled} />
+        )}
+      </div>
+    </div>
   );
 }
 
@@ -153,12 +160,10 @@ export default function TouchLayer({
  * so it can never sit over the play area no matter how wide the board gets.
  */
 function StickView({
-  side,
   accent,
   knobRef,
   disabled,
 }: {
-  side: "left" | "right";
   accent: string;
   knobRef: RefObject<HTMLDivElement | null>;
   disabled: boolean;
@@ -167,9 +172,8 @@ function StickView({
     <div
       aria-hidden="true"
       className={
-        "touch-only pointer-events-none fixed top-1/2 z-30 h-[var(--stick-size)] w-[var(--stick-size)] -translate-y-1/2 items-center justify-center rounded-full border-2 bg-white/45 backdrop-blur-sm transition-opacity " +
-        (side === "left" ? "left-[var(--pad-inset)]" : "right-[var(--pad-inset)]") +
-        (disabled ? " opacity-0" : " opacity-100")
+        "relative flex h-[var(--stick-size)] w-[var(--stick-size)] items-center justify-center rounded-full border-2 bg-white/45 backdrop-blur-sm transition-opacity " +
+        (disabled ? "opacity-0" : "opacity-100")
       }
       style={{ borderColor: accent + "44" }}
     >
@@ -201,7 +205,7 @@ function BoostButton({
       type="button"
       disabled={disabled}
       className={
-        "touch-only fixed top-1/2 right-[var(--pad-inset)] z-30 h-[var(--boost-size)] w-[var(--boost-size)] -translate-y-1/2 touch-none select-none items-center justify-center rounded-full border-2 bg-white/55 text-[10px] backdrop-blur-[2px] transition-transform active:scale-90 " +
+        "pointer-events-auto flex h-[var(--boost-size)] w-[var(--boost-size)] touch-none select-none items-center justify-center rounded-full border-2 bg-white/55 text-xs backdrop-blur-[2px] transition-transform active:scale-90 " +
         (disabled ? "opacity-0" : "opacity-100")
       }
       style={{ borderColor: accent + "55", color: accent }}
@@ -229,12 +233,10 @@ const DIRS: { key: ArrowKey; label: string; cell: string }[] = [
 
 /** Four discrete buttons, for the facing game where each press is one input. */
 function DPad({
-  side,
   accent,
   input,
   disabled,
 }: {
-  side: "left" | "right";
   accent: string;
   input: InputManager | null;
   disabled: boolean;
@@ -242,14 +244,13 @@ function DPad({
   return (
     <div
       className={
-        "touch-only grid fixed top-1/2 z-30 -translate-y-1/2 touch-none select-none grid-cols-3 grid-rows-3 gap-1 transition-opacity " +
-        (side === "left" ? "left-[var(--pad-inset)]" : "right-[var(--pad-inset)]") +
-        (disabled ? " opacity-0" : " opacity-100")
+        "pointer-events-auto grid touch-none select-none grid-cols-3 grid-rows-3 gap-1 transition-opacity " +
+        (disabled ? "opacity-0" : "opacity-100")
       }
     >
       {DIRS.map((d) => (
         <button
-          key={side + d.key}
+          key={d.key}
           type="button"
           disabled={disabled}
           className={

@@ -290,9 +290,6 @@ a {
   .touch-only {
     display: flex;
   }
-  .touch-only.grid {
-    display: grid;
-  }
 }
 
 :root {
@@ -300,7 +297,9 @@ a {
   --stick-size: 5.5rem;
   --knob-size: 2.5rem;
   --dpad-btn: 2.5rem;
-  --boost-size: 3.6rem;
+  /* Boost matches the stick so neither thumb feels like the second-class one. */
+  --boost-size: var(--stick-size);
+  --board-w: min(calc(100vw - 2rem), 1000px, calc((100dvh - var(--board-reserve)) * 10 / 7));
 }
 
 @media (orientation: landscape) and (max-height: 430px) and (pointer: coarse) {
@@ -309,7 +308,6 @@ a {
     --stick-size: 4.5rem;
     --knob-size: 2.1rem;
     --dpad-btn: 2.1rem;
-    --boost-size: 3rem;
   }
 }
 
