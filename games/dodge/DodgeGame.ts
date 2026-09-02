@@ -1,6 +1,12 @@
 import { BaseGame, type GameServices, type HudStat } from "@/games/core/BaseGame";
 import { Booster } from "@/games/core/Booster";
-import { circleHitForgiving, edgeGap, outOfBounds, type Circle } from "@/games/core/Collision";
+import {
+  circleHit,
+  circleHitForgiving,
+  edgeGap,
+  outOfBounds,
+  type Circle,
+} from "@/games/core/Collision";
 import {
   OPENING_GRACE,
   rampEaseIn,
@@ -9,10 +15,15 @@ import {
   stage,
 } from "@/games/core/curve";
 import type { ParticleOptions, ParticleShape } from "@/games/core/Particles";
-import { drawGrid, roundRect, text, withAlpha } from "@/games/core/draw";
+import { drawGrid, roundRect, text, withAlpha, type TextOptions } from "@/games/core/draw";
 import { clamp, damp, dist, randInt, randRange } from "@/games/core/Vector2";
 import {
+  CAN_BODY,
+  CAN_OUTLINE,
+  CAN_TRIM,
+  CAN_TRIM_OUTLINE,
   createBulletPool,
+  createPickupPool,
   createSpiral,
   createWallCue,
   KIND_AIMED,
@@ -25,6 +36,7 @@ import {
   TAU,
   type Bullet,
   type BulletKind,
+  type Pickup,
 } from "./entities";
 
 const ACCENT = "#4f8cff";
@@ -65,6 +77,13 @@ const PANEL_R = 30;
 const BANNER_W = 460;
 const BANNER_H = 74;
 const BANNER_Y = 92;
+
+// Boost gauge, in one place because the collect flash has to light up the exact
+// same rectangle the Booster draws.
+const GAUGE_INSET = 30;
+const GAUGE_Y = 214;
+const GAUGE_W = 11;
+const GAUGE_H = 300;
 
 // --- Player ----------------------------------------------------------------
 /** Drawn body radius. Purely cosmetic: it never kills. */
@@ -191,6 +210,71 @@ const GRAZE_SFX_CD = 0.035;
 const FORGIVE = 2.5;
 const FORGIVE_HEAVY = 4;
 
+// --- Boost cans ------------------------------------------------------------
+/**
+ * Worth just under half a tank. A full tank is only ~1.8s of continuous burn,
+ * so one can buys a single decisive escape rather than a second tank's worth of
+ * free movement.
+ */
+const PICKUP_REFILL = 0.45;
+/** First can waits out the opening banner, so the one that teaches it is seen. */
+const PICKUP_FIRST = 4.5;
+/**
+ * Cadence, tightening a little as the arena fills. At ~8s apart a player who
+ * takes maybe half of them boosts three or four times a minute; even taking
+ * every single one supplies about 0.055 tanks/sec against a 0.55/sec burn, so
+ * boost tops out near a tenth of the time and can never be permanently up.
+ */
+const PICKUP_EVERY_FROM = 9.5;
+const PICKUP_EVERY_TO = 7;
+const PICKUP_EVERY_SECONDS = 90;
+const PICKUP_JITTER = 1.2;
+/** Two on screen is a choice between them; three is litter. */
+const MAX_PICKUPS = 2;
+/**
+ * Uncollected cans expire so the arena does not silt up: 3s solid, then 2s of
+ * blinking before they go.
+ *
+ * A blink, not a fade — a fade reads as decoration until it is already gone,
+ * whereas a blink is the arcade signal for "decide now", which is exactly the
+ * decision a can is asking for.
+ */
+const PICKUP_LIFE = 5;
+const PICKUP_BLINK = 2;
+/** Blink rate at the start and end of the warning, in Hz. */
+const PICKUP_BLINK_FROM = 5;
+const PICKUP_BLINK_TO = 14;
+const PICKUP_POP = 0.22;
+/**
+ * Grab radius, tested against the 11px body rather than the 5px core: 37px of
+ * reach, about three times the can's own silhouette. Being generous here cannot
+ * make the game unfair, because a can does not kill — a wide radius only
+ * changes how often a committed run pays off, and threading a needle for a
+ * reward is the wrong kind of difficulty.
+ */
+const PICKUP_GRAB_R = 26;
+/** Placement guards. See rollPickupSpot() and spotIsSafe(). */
+const PICKUP_EDGE_KEEP = 118;
+const PICKUP_MIN_FROM_PLAYER = 150;
+const PICKUP_CLEAR_BULLET = 66;
+/** How far ahead live bullets are projected for that clearance test. */
+const PICKUP_LOOKAHEAD = 0.7;
+const PICKUP_CLEAR_EMITTER = 170;
+const PICKUP_TRIES = 16;
+
+const SCORE_PER_PICKUP = 60;
+/** A wasted can still pays, just visibly less. */
+const SCORE_PICKUP_FULL = 20;
+/** Seconds the gauge stays lit after a top-up. */
+const FUEL_FLASH_TIME = 0.75;
+/** Hoisted so the flash label costs nothing per frame; only alpha changes. */
+const FUEL_LABEL: TextOptions = {
+  size: 10,
+  color: CAN_OUTLINE,
+  alpha: 1,
+  letterSpacing: "2px",
+};
+
 const BANNER_TIME = 1.8;
 const STAGE_NAMES: readonly string[] = [
   "SURVIVE",
@@ -210,12 +294,18 @@ const STAGE_NAMES: readonly string[] = [
  */
 export class DodgeGame extends BaseGame {
   private readonly bullets = createBulletPool(480);
+  /** Six is double MAX_PICKUPS twice over: a slot is always free on demand. */
+  private readonly pickups = createPickupPool(6);
   private readonly cue = createWallCue();
   private readonly spiral = createSpiral();
   /** The kill/graze circle. Mutated in place, never re-created. */
   private readonly core: Circle = { x: 0, y: 0, r: CORE_R };
   /** Scratch circle holding a bullet at its closest approach this frame. */
   private readonly probe: Circle = { x: 0, y: 0, r: 0 };
+  /** The drawn body, used only for the forgiving pickup test. */
+  private readonly bodyCircle: Circle = { x: 0, y: 0, r: BODY_R };
+  /** Scratch circle standing in for a can's grab radius. */
+  private readonly grabCircle: Circle = { x: 0, y: 0, r: PICKUP_GRAB_R };
   /** One reused options object behind every particle. See puff(). */
   private readonly po: ParticleOptions = {
     x: 0,
@@ -253,6 +343,16 @@ export class DodgeGame extends BaseGame {
   /** Live heavy count, recounted every frame in stepBullets. */
   private heavyAlive = 0;
 
+  private pickupCd = PICKUP_FIRST;
+  /** Candidate spawn point while the placement guards vet it. */
+  private candX = 0;
+  private candY = 0;
+  /** 1 on a top-up, decaying: drives the gauge flash. */
+  private fuelFlash = 0;
+  /** Fuel level either side of the last top-up, so the flash can show the jump. */
+  private fuelFrom = 0;
+  private fuelTo = 0;
+
   private grazeCount = 0;
   private streak = 0;
   private streakTimer = 0;
@@ -288,7 +388,12 @@ export class DodgeGame extends BaseGame {
   protected onReset(): void {
     this.booster.reset();
     for (let i = 0; i < this.bullets.length; i++) this.bullets[i].active = false;
+    for (let i = 0; i < this.pickups.length; i++) this.pickups[i].active = false;
     this.poolCursor = 0;
+    this.pickupCd = PICKUP_FIRST;
+    this.fuelFlash = 0;
+    this.fuelFrom = 0;
+    this.fuelTo = 0;
 
     this.px = this.width / 2;
     this.py = this.height / 2;
@@ -365,6 +470,7 @@ export class DodgeGame extends BaseGame {
     if (this.bannerT > 0) this.bannerT -= dt;
     if (this.grazeSfxCd > 0) this.grazeSfxCd -= dt;
     if (this.grazeFlash > 0) this.grazeFlash = Math.max(0, this.grazeFlash - dt * 3.4);
+    if (this.fuelFlash > 0) this.fuelFlash = Math.max(0, this.fuelFlash - dt / FUEL_FLASH_TIME);
 
     if (this.streakTimer > 0) {
       this.streakTimer -= dt;
@@ -379,6 +485,9 @@ export class DodgeGame extends BaseGame {
     this.movePlayer(dt);
     this.spawn(dt);
     this.stepBullets(dt);
+    // After the bullets, so a candidate spot is vetted against this frame's
+    // positions rather than last frame's.
+    this.stepPickups(dt);
   }
 
   private checkStage(): void {
@@ -974,6 +1083,215 @@ export class DodgeGame extends BaseGame {
     }
   }
 
+  // --- Boost cans ----------------------------------------------------------
+
+  /** Cadence, expiry and collection. */
+  private stepPickups(dt: number): void {
+    this.pickupCd -= dt;
+    if (this.pickupCd <= 0) {
+      // A rejected spawn retries soon rather than forfeiting a whole cycle: the
+      // arena is at its most crowded exactly when boost is worth the most.
+      this.pickupCd = this.spawnPickup() ? this.nextPickupDelay() : 1.4;
+    }
+
+    this.bodyCircle.x = this.px;
+    this.bodyCircle.y = this.py;
+
+    for (let i = 0; i < this.pickups.length; i++) {
+      const pk = this.pickups[i];
+      if (!pk.active) continue;
+      pk.age += dt;
+      pk.life -= dt;
+      if (pk.life <= 0) {
+        pk.active = false;
+        continue;
+      }
+      // Tested against the anchor rather than the bobbing draw position: a 3px
+      // bob inside 37px of reach is not worth making collection time-dependent.
+      this.grabCircle.x = pk.x;
+      this.grabCircle.y = pk.y;
+      if (circleHit(this.bodyCircle, this.grabCircle)) this.collect(pk);
+    }
+  }
+
+  private nextPickupDelay(): number {
+    return (
+      rampLinear(this.elapsed, PICKUP_EVERY_FROM, PICKUP_EVERY_TO, PICKUP_EVERY_SECONDS) +
+      randRange(-PICKUP_JITTER, PICKUP_JITTER)
+    );
+  }
+
+  /** @returns false when the arena is full or every candidate spot was vetoed. */
+  private spawnPickup(): boolean {
+    let live = 0;
+    let slot: Pickup | null = null;
+    for (let i = 0; i < this.pickups.length; i++) {
+      const pk = this.pickups[i];
+      if (pk.active) live++;
+      else if (slot === null) slot = pk;
+    }
+    if (live >= MAX_PICKUPS || slot === null) return false;
+
+    for (let attempt = 0; attempt < PICKUP_TRIES; attempt++) {
+      this.rollPickupSpot();
+      if (!this.spotIsSafe(this.candX, this.candY)) continue;
+      slot.active = true;
+      slot.x = this.candX;
+      slot.y = this.candY;
+      slot.life = PICKUP_LIFE;
+      slot.age = 0;
+      slot.bob = randRange(0, TAU);
+      // High and quiet: audible under the stream, never mistakable for a warn.
+      this.audio.play("spawn", 1.7, 0.32);
+      this.puff(slot.x, slot.y, 0, 0, 0.34, 16, 4, CAN_BODY, "ring", false, 1);
+      return true;
+    }
+    // Nowhere was safe this instant. Dropping the can is the right answer: the
+    // guard exists precisely so a reward is never placed into a trap.
+    return false;
+  }
+
+  /**
+   * Picks a candidate point. Two rules are baked into the sampling rather than
+   * checked afterwards, because no amount of retrying can satisfy them: stay
+   * off the rim, and stay inside a charging wall's gap.
+   */
+  private rollPickupSpot(): void {
+    const loX = PICKUP_EDGE_KEEP;
+    const hiX = this.width - PICKUP_EDGE_KEEP;
+    const loY = PICKUP_EDGE_KEEP;
+    const hiY = this.height - PICKUP_EDGE_KEEP;
+    // Never near the border: collecting there would leave the player pinned in
+    // a corner with the whole arena's traffic converging on them.
+    let x = randRange(loX, hiX);
+    let y = randRange(loY, hiY);
+
+    const cue = this.cue;
+    if (cue.active) {
+      // A wall is charging, and in a second the only survivable band of the
+      // arena is its gap. A can anywhere else would be a reward pulling the
+      // player out of the one opening — exactly the unavoidable death this
+      // guard forbids. Inset by the flanking bullets' kill radius, so the can
+      // lands inside the green the player is already reading as safe.
+      const half = Math.max(12, cue.gapHalf - WALL_GAP_INSET - 8);
+      const spanLo = cue.axis === 0 ? loY : loX;
+      const spanHi = cue.axis === 0 ? hiY : hiX;
+      const lo = Math.max(cue.gapCenter - half, spanLo);
+      const hi = Math.min(cue.gapCenter + half, spanHi);
+      // When the gap hugs the rim and the two rules disagree, the wall wins:
+      // the edge margin is comfort, the gap is survival.
+      const along = hi > lo ? randRange(lo, hi) : cue.gapCenter;
+      if (cue.axis === 0) y = along;
+      else x = along;
+    }
+
+    this.candX = x;
+    this.candY = y;
+  }
+
+  /** The guards a retry can actually satisfy. */
+  private spotIsSafe(x: number, y: number): boolean {
+    // Far enough that going for it is a real positional commitment, and never
+    // materialising under the player's nose.
+    if (dist(x, y, this.px, this.py) < PICKUP_MIN_FROM_PLAYER) return false;
+
+    // The emitter holds fire at point-blank range, so a can parked on it would
+    // look free and then be standing in the muzzle the moment it drifts on.
+    if (this.curStage >= 3) {
+      this.edgeAt(this.spiral.p);
+      if (dist(x, y, this.ex, this.ey) < PICKUP_CLEAR_EMITTER) return false;
+    }
+
+    // Nothing may be there, and nothing may be about to be: every live bullet
+    // is projected forward, so a can is never dropped in front of a volley that
+    // is most of a second from arriving.
+    const n = this.bullets.length;
+    for (let i = 0; i < n; i++) {
+      const b = this.bullets[i];
+      if (!b.active) continue;
+      const clear = PICKUP_CLEAR_BULLET + b.r;
+      const dx = b.x - x;
+      const dy = b.y - y;
+      if (dx * dx + dy * dy < clear * clear) return false;
+      const ax = dx + b.vx * PICKUP_LOOKAHEAD;
+      const ay = dy + b.vy * PICKUP_LOOKAHEAD;
+      if (ax * ax + ay * ay < clear * clear) return false;
+    }
+    return true;
+  }
+
+  private collect(pk: Pickup): void {
+    pk.active = false;
+    const gained = this.booster.refill(PICKUP_REFILL);
+
+    // The pop fires either way — a can that vanishes in silence reads as a bug
+    // — but the fuel half is skipped when nothing actually moved, so a full
+    // tank never gets a gauge flash it did not earn.
+    this.pickupPop(pk.x, pk.y, gained > 0);
+
+    if (gained > 0) {
+      this.rawScore += SCORE_PER_PICKUP;
+      this.fuelFrom = this.booster.fuel - gained;
+      this.fuelTo = this.booster.fuel;
+      this.fuelFlash = 1;
+      this.audio.play("success", 1, 0.75);
+      this.audio.play("score", 1.35, 0.35);
+      this.shake.add(2.4, 0.16);
+      this.gaugeSparks();
+    } else {
+      this.rawScore += SCORE_PICKUP_FULL;
+      // The same event, audibly worth less. Silence would read as a miss.
+      this.audio.play("click", 1.25, 0.5);
+    }
+  }
+
+  /** The collect burst. Weaker when the tank was already full. */
+  private pickupPop(x: number, y: number, strong: boolean): void {
+    this.puff(x, y, 0, 0, strong ? 0.42 : 0.26, strong ? 11 : 8, 0, CAN_BODY, "ring", false, 1);
+    const count = strong ? 16 : 7;
+    for (let i = 0; i < count; i++) {
+      const a = (i / count) * TAU + randRange(-0.28, 0.28);
+      const sp = randRange(70, strong ? 250 : 140);
+      this.puff(
+        x,
+        y,
+        Math.cos(a) * sp,
+        Math.sin(a) * sp - 40,
+        randRange(0.3, 0.6),
+        3,
+        0.6,
+        i % 2 === 0 ? CAN_BODY : CAN_TRIM,
+        "circle",
+        false,
+        0.3
+      );
+    }
+  }
+
+  /**
+   * Sparks off the gauge itself. The can is collected up to half a screen from
+   * the bar it feeds, and this is what drags the eye across that gap.
+   */
+  private gaugeSparks(): void {
+    const x = this.width - GAUGE_INSET + GAUGE_W * 0.5;
+    const y = GAUGE_Y + GAUGE_H * (1 - this.fuelTo);
+    for (let i = 0; i < 8; i++) {
+      this.puff(
+        x + randRange(-10, 6),
+        y + randRange(-4, 4),
+        randRange(-45, 25),
+        randRange(-155, -60),
+        randRange(0.3, 0.55),
+        2.6,
+        0.5,
+        i % 2 === 0 ? CAN_BODY : CAN_TRIM,
+        "circle",
+        false,
+        0.35
+      );
+    }
+  }
+
   // --- Death ---------------------------------------------------------------
 
   private explode(): void {
@@ -1130,6 +1448,7 @@ export class DodgeGame extends BaseGame {
     this.drawFrame(g);
     if (this.cue.active) this.drawWallCue(g);
     if (this.curStage >= 3) this.drawEmitter(g);
+    this.drawPickups(g);
     this.drawBullets(g);
     if (this.status === "playing") this.drawPlayer(g);
 
@@ -1510,8 +1829,154 @@ export class DodgeGame extends BaseGame {
     }
   }
 
+  /**
+   * Cans, drawn under the bullets on purpose: a reward may never end up
+   * covering the thing that kills you.
+   */
+  private drawPickups(g: CanvasRenderingContext2D): void {
+    const fade = this.runFade();
+    if (fade <= 0) return;
+
+    for (let i = 0; i < this.pickups.length; i++) {
+      const pk = this.pickups[i];
+      if (!pk.active) continue;
+      // Expiry blinks, accelerating as the last seconds run out. Alpha never
+      // reaches zero mid-blink, so the can stays readable while it warns.
+      let alpha = fade;
+      if (pk.life < PICKUP_BLINK) {
+        const t = 1 - pk.life / PICKUP_BLINK;
+        const hz = PICKUP_BLINK_FROM + (PICKUP_BLINK_TO - PICKUP_BLINK_FROM) * t;
+        const phase = (PICKUP_BLINK - pk.life) * hz;
+        alpha *= Math.sin(phase * Math.PI) > 0 ? 1 : 0.18;
+      }
+      const k = Math.min(1, pk.age / PICKUP_POP);
+      // Smoothstep with a bulge, so a can arrives rather than simply appearing.
+      const scale = k * k * (3 - 2 * k) * (1 + 0.3 * Math.sin(k * Math.PI));
+      const y = pk.y + Math.sin(pk.age * 2.4 + pk.bob) * 3.4;
+
+      g.save();
+
+      // The grab radius, drawn as a soft green pool. The reach is deliberately
+      // generous and the player should be able to see that it is, rather than
+      // discover it by accident. Faint enough that a bullet crossing it still
+      // reads at full strength, and it is under the bullets anyway.
+      g.globalAlpha = alpha * (0.09 + 0.04 * Math.sin(pk.age * 3 + pk.bob));
+      g.fillStyle = CAN_BODY;
+      g.beginPath();
+      g.arc(pk.x, y, PICKUP_GRAB_R + BODY_R, 0, TAU);
+      g.fill();
+
+      // Shadow stays on the floor while the can bobs above it, which is what
+      // sells the bob as height rather than as a wobble.
+      g.globalAlpha = alpha;
+      g.fillStyle = C_SHADOW_SOFT;
+      g.beginPath();
+      g.ellipse(pk.x + 1.5, pk.y + 16, 11, 4.2, 0, 0, TAU);
+      g.fill();
+
+      g.translate(pk.x, y);
+      g.scale(scale, scale);
+      this.drawCan(g);
+      g.restore();
+    }
+  }
+
+  /**
+   * A jerry can: a squared-off body with a handle and a spout. Every hazard in
+   * this game is a disc, so the silhouette alone says "not a bullet" before the
+   * colour has been read at all.
+   */
+  private drawCan(g: CanvasRenderingContext2D): void {
+    g.lineJoin = "round";
+
+    // Handle and spout first, so the body outline crosses in front of them.
+    g.fillStyle = CAN_TRIM;
+    g.strokeStyle = CAN_TRIM_OUTLINE;
+    g.lineWidth = 2.2;
+    roundRect(g, -7, -18, 14, 7, 3);
+    g.fill();
+    g.stroke();
+    roundRect(g, 9, -12, 8, 6, 2.5);
+    g.fill();
+    g.stroke();
+
+    g.fillStyle = CAN_BODY;
+    g.strokeStyle = CAN_OUTLINE;
+    g.lineWidth = 2.6;
+    roundRect(g, -12, -12, 24, 26, 6);
+    g.fill();
+    g.stroke();
+
+    // A bolt is the one glyph that still reads as "charge" at 24px.
+    g.fillStyle = C_BODY_FILL;
+    g.beginPath();
+    g.moveTo(2.6, -8.4);
+    g.lineTo(-4.6, 1.6);
+    g.lineTo(-0.6, 1.6);
+    g.lineTo(-2.6, 9.6);
+    g.lineTo(4.6, -0.6);
+    g.lineTo(0.6, -0.6);
+    g.closePath();
+    g.fill();
+
+    // Same gloss treatment the bullets get, so the can sits on the same floor.
+    g.globalAlpha *= 0.45;
+    g.fillStyle = C_GLOSS;
+    roundRect(g, -9, -9, 4, 18, 2);
+    g.fill();
+  }
+
+  /**
+   * The top-up, drawn on the gauge itself. Otherwise the cause (a can half a
+   * screen away) and the effect (a bar in the corner) never meet in one glance:
+   * this lights exactly the slice of fuel the can just added, and the chevrons
+   * walk the eye up through it.
+   */
+  private drawFuelFlash(g: CanvasRenderingContext2D, x: number): void {
+    const f = this.fuelFlash * this.runFade();
+    if (f <= 0) return;
+    const r = GAUGE_W / 2;
+    const top = GAUGE_Y + GAUGE_H * (1 - this.fuelTo);
+    const h = Math.max(1, GAUGE_H * (this.fuelTo - this.fuelFrom));
+
+    g.save();
+    // The added slice, in the arena's one colour for "safe", so the source of
+    // the fuel is unambiguous.
+    g.globalAlpha = 0.3 + 0.6 * f;
+    g.fillStyle = CAN_BODY;
+    roundRect(g, x, top, GAUGE_W, h, r);
+    g.fill();
+
+    // A ring pushing out of the new top of the bar.
+    g.globalAlpha = f * 0.8;
+    g.strokeStyle = CAN_BODY;
+    g.lineWidth = 2;
+    g.beginPath();
+    g.arc(x + r, top, 6 + 24 * (1 - f), 0, TAU);
+    g.stroke();
+
+    g.lineWidth = 2.4;
+    g.lineCap = "round";
+    for (let i = 0; i < 3; i++) {
+      const t = clamp(1 - f + i * 0.22, 0, 1);
+      const cy = GAUGE_Y + GAUGE_H * (1 - (this.fuelFrom + (this.fuelTo - this.fuelFrom) * t));
+      g.globalAlpha = f * 0.75 * (1 - t);
+      g.beginPath();
+      g.moveTo(x - 4, cy + 4);
+      g.lineTo(x + r, cy - 2);
+      g.lineTo(x + GAUGE_W + 4, cy + 4);
+      g.stroke();
+    }
+    g.restore();
+
+    FUEL_LABEL.alpha = f * 0.95;
+    text(g, "+FUEL", x + r, GAUGE_Y - 36, FUEL_LABEL);
+  }
+
   protected onRenderOverlay(g: CanvasRenderingContext2D): void {
-    this.booster.render(g, this.width - 30, 214, 11, 300, ACCENT);
+    const gx = this.width - GAUGE_INSET;
+    this.booster.render(g, gx, GAUGE_Y, GAUGE_W, GAUGE_H, ACCENT);
+    if (this.fuelFlash > 0) this.drawFuelFlash(g, gx);
 
     if (this.bannerT <= 0) return;
     const k = this.bannerT / BANNER_TIME;

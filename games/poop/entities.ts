@@ -133,3 +133,43 @@ export function blankPose(): GuyPose {
     dead: 0,
   };
 }
+
+/**
+ * A boost cell: the one thing that falls out of this sky and is good for you.
+ *
+ * It drifts down far slower than a turd and dissolves just above the floor, so
+ * `fade` counts the dissolve down while the record is still active — snapping
+ * it off would read as "you missed it" a frame before the player had.
+ */
+export interface Pickup {
+  active: boolean;
+  x: number;
+  y: number;
+  vy: number;
+  r: number;
+  /** Drives tilt, bob and twinkle. */
+  phase: number;
+  /** Seconds since spawn; only used for the scale-in pop. */
+  age: number;
+  /** Seconds of dissolve left, or -1 while still falling. */
+  fade: number;
+  /** Seconds resting on the floor, driving the blink warning. Negative while falling. */
+  grounded: number;
+  /** Sparkle-trail emission accumulator, in particles. */
+  trail: number;
+}
+
+export function blankPickup(): Pickup {
+  return {
+    active: false,
+    x: 0,
+    y: 0,
+    vy: 0,
+    r: 14,
+    phase: 0,
+    age: 0,
+    fade: -1,
+    grounded: -1,
+    trail: 0,
+  };
+}

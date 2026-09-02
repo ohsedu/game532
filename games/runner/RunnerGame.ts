@@ -1,5 +1,5 @@
 import { BaseGame, type GameServices, type HudStat } from "@/games/core/BaseGame";
-import { rectHit, type Rect } from "@/games/core/Collision";
+import { circleRectHit, rectHit, type Circle, type Rect } from "@/games/core/Collision";
 import { OPENING_GRACE, rampAsymptotic, rampLinear, stage } from "@/games/core/curve";
 import { roundRect, text } from "@/games/core/draw";
 import type { ParticleOptions, ParticleShape } from "@/games/core/Particles";
@@ -9,10 +9,21 @@ import {
   BEAM_LINE,
   BLOCK_FILL,
   BLOCK_LINE,
+  CEIL_FILL,
+  CEIL_LINE,
+  CEIL_TAPE,
+  COIN_CORE,
+  COIN_FILL,
+  COIN_LINE,
+  createCoinPool,
   createObstaclePool,
   KIND_BEAM,
   KIND_BLOCK,
+  KIND_CEIL,
   KIND_PIT,
+  LINK_LEAD,
+  LINK_NONE,
+  LINK_TAIL,
   PIT_RIM,
   PIT_RIM_LINE,
   TAU,
@@ -49,6 +60,13 @@ const C_FLASH = "#fff3e6";
 const C_PIT_VOID = "#c9cfe4";
 const C_PIT_DEEP = "rgba(34,37,45,0.16)";
 const C_DUST = "#c6cbe0";
+/** The rail that ties a compound pair together, and its chevrons. */
+const C_LINK = "rgba(109,69,196,0.6)";
+const C_LINK_SOFT = "rgba(109,69,196,0.13)";
+/** Floor paint under a roof: the ground half of the no-jump telegraph. */
+const C_ROOF_ZONE = "rgba(255,180,67,0.2)";
+const C_ROOF_ZONE_LINE = "rgba(176,112,13,0.45)";
+const C_GAUGE_TRACK = "rgba(34,37,45,0.09)";
 
 // --- Layout of the drawn card. Cosmetic only; the arena is the full space. ---
 const PANEL_PAD = 8;
@@ -57,8 +75,13 @@ const PANEL_R = 30;
 const GROUND_Y = 520;
 /** The runner never moves horizontally; the world does. */
 const RUN_X = 250;
-/** Obstacles are born here, just off the right edge. */
-const SPAWN_X = 1040;
+/**
+ * Obstacles are born here, off the right edge. Nothing is readable before it
+ * crosses the card edge at 1000, so the runway the player actually gets to
+ * read is 750px whatever this is; the extra margin exists so a compound pair
+ * can be committed as one unit with its tail already placed.
+ */
+const SPAWN_X = 1120;
 
 // --- The runner -------------------------------------------------------------
 /** Collision half-width. The drawn body is wider on purpose. */
@@ -90,7 +113,8 @@ const G_FALL = 3510;
  */
 const CUT_MUL = 2.6;
 const APEX = (JUMP_V * JUMP_V) / (2 * G_RISE);
-const AIR_MAX = JUMP_V / G_RISE + Math.sqrt((2 * APEX) / G_FALL);
+const T_RISE = JUMP_V / G_RISE;
+const AIR_MAX = T_RISE + Math.sqrt((2 * APEX) / G_FALL);
 /** A jump still registers this long after running off a ledge. */
 const COYOTE = 0.1;
 /** A jump pressed this long before landing fires the moment the feet touch. */
@@ -127,19 +151,18 @@ const SLIDE_TAP = 0.44;
 
 // --- Speed ------------------------------------------------------------------
 /**
- * Asymptotic: always climbing, never past 760px/s. At 760 an obstacle crosses
- * the 790px between its spawn point and the runner in 1.04s, which is the
- * floor of what stays readable.
+ * Asymptotic: always climbing, never past 900px/s.
+ *
+ * 380 at the gun, 598 at 30s, 726 at 60s, 841 at two minutes — where the old
+ * curve was still at 604 after a full minute. 900 is where the ramp is not
+ * allowed to go: an obstacle is legible for the 750px it spends on the card,
+ * which at 900px/s is 0.83s, and that is REACT_MIN plus the 0.4s a hop needs
+ * with nothing left over. The asymptote is never reached, so the tail of the
+ * run keeps tightening without ever crossing the line.
  */
-const SPEED_FROM = 350;
-const SPEED_RANGE = 410;
-const SPEED_HALF = 62;
-/**
- * Sizes and gaps are computed against the speed the run will have by the time
- * the obstacle actually arrives, not the speed right now. Speed only climbs,
- * so using the current value would quietly shave the reaction window.
- */
-const SPEED_LOOKAHEAD = 1.5;
+const SPEED_FROM = 380;
+const SPEED_RANGE = 520;
+const SPEED_HALF = 55;
 
 // --- Spacing: the fairness rule --------------------------------------------
 /**
@@ -149,10 +172,30 @@ const SPEED_LOOKAHEAD = 1.5;
 const REACT_MIN = 0.42;
 /** Nothing may ever be spawned closer than this in time. See gapTimeFor(). */
 const MIN_GAP_TIME = REACT_MIN + AIR_MAX;
+/**
+ * The runner is 2 * HW wide, so the world distance between two obstacles buys
+ * 32px less free time than it looks like it does: the box is still overlapping
+ * the first one after its trailing edge passes the nose. Every booked gap adds
+ * this on top of the time floor, which is what makes the floor a floor on the
+ * window the player actually gets rather than on a measurement between edges
+ * nobody occupies.
+ */
+const BODY_SPAN = 2 * HW;
+/**
+ * Every floor is padded by this before it is booked.
+ *
+ * A gap is decided in seconds, committed in pixels, and then spent at whatever
+ * speed the run has grown to by the time it reaches the player — which is a
+ * hair faster than the estimate it was converted with. The drift is under half
+ * a percent, but a floor that is only nearly held is not a floor.
+ */
+const GAP_DRIFT_PAD = 0.02;
 /** Landing from the previous obstacle costs a beat before the next decision. */
 const LAND_RECOVER = 0.12;
 /** A slide has to be started from the floor, which needs its own beat. */
 const SLIDE_SETUP = 0.18;
+/** A no-jump stretch is only fair off a settled runway, never off a landing. */
+const ROOF_SETTLE = 0.15;
 /**
  * Runway to a beam, in seconds, inside which the action button stops meaning
  * "jump" and starts meaning "get under it".
@@ -162,15 +205,45 @@ const SLIDE_SETUP = 0.18;
  * game is built on, so inside it the press could only ever have been a death.
  * A beam is the one obstacle a jump can never clear, which is why it alone gets
  * to take the button over — the player is not losing a choice here, they never
- * had one.
+ * had one. The roof deliberately does not take it: a press under a roof has to
+ * be able to kill, or restraint is not a skill.
  */
 const BEAM_TAKEOVER = MIN_GAP_TIME;
 /** Slack on a computed slide, so it is still down when the beam arrives. */
 const SLIDE_COVER_PAD = 0.08;
-const GAP_TIME_FROM = 2.15;
-const GAP_TIME_TO = 1.2;
-const GAP_TIME_SECONDS = 110;
-const GAP_JITTER = 0.3;
+/**
+ * The spacing ramp, and the floor it converges onto rather than through. By
+ * 95s the requested gap is 0.95s, which is under every floor gapTimeFor() can
+ * produce (1.14s to 1.47s depending on the pairing), so from there on the run
+ * is spaced at exactly the reaction floor and not one frame tighter.
+ */
+const GAP_TIME_FROM = 2.05;
+const GAP_TIME_TO = 0.95;
+const GAP_TIME_SECONDS = 95;
+/** Jitter shrinks with the ramp: a late run is relentless, not random. */
+const JITTER_FROM = 0.42;
+const JITTER_TO = 0.08;
+
+// --- Compound pairs ---------------------------------------------------------
+/**
+ * Execution slack inside a pair, standing in for REACT_MIN.
+ *
+ * A pair is not a surprise. Both halves are committed in the same spawn, they
+ * share a rail on the floor, and the lead carries a badge of the verb that
+ * follows it, so this window is not paying for recognition — only for the
+ * second press. That is why it is allowed to be shorter than a cold reaction,
+ * and why nothing else in the game is.
+ */
+const PAIR_REACT = 0.3;
+/** Getting out of the slide pose before the jump. */
+const PAIR_SLIDE_EXIT = 0.12;
+/** Winding up the jump once standing. */
+const PAIR_JUMP_PREP = 0.1;
+/** No pair is ever tighter than this, whatever the arithmetic says. */
+const PAIR_MIN_TIME = 0.5;
+const PAIR_CHANCE_FROM = 0.3;
+const PAIR_CHANCE_TO = 0.52;
+const PAIR_CHANCE_SECONDS = 60;
 
 // --- Obstacle sizing --------------------------------------------------------
 const BLOCK_H_MIN = 40;
@@ -200,27 +273,95 @@ const PIT_CROSS_SAFETY = 0.52;
 const PIT_LIP = 6;
 /** Falling this far below the floor line is unrecoverable. */
 const PIT_DEATH = 42;
+/**
+ * Roof clearance, and the whole idea of the third answer.
+ *
+ * A standing runner is 78 tall and goes under with 18px to spare, so doing
+ * nothing is free. The jump leaves the floor at 1000px/s and spends that 18px
+ * in under two frames, so any jump at all is fatal — there is no half-measure
+ * to hunt for. The skill is keeping the thumb still while a wall of amber
+ * comes at you, which costs no new input and is the only thing in the game
+ * that punishes acting instead of failing to act.
+ */
+const ROOF_CLEAR = 96;
+/** Sized in seconds spent underneath, so it stays a stretch and not a slab. */
+const ROOF_TIME_MIN = 0.55;
+const ROOF_TIME_MAX = 1;
+const ROOF_W_MIN = 220;
+const ROOF_W_MAX = 620;
+/** Runway ahead of a roof at which the approach warning fires, in seconds. */
+const ROOF_WARN_LEAD = 0.9;
+
+// --- Coins ------------------------------------------------------------------
+const COIN_R = 11;
+/** Added to the radius for the pickup test. Being on the line is enough. */
+const COIN_GRAB = 8;
+/** Coins ride this far above the soles: dead centre of a standing body. */
+const COIN_RIDE = 38;
+const COIN_ARC_MAX = 8;
+/** Fewer than this and the line is a stub not worth committing a jump to. */
+const COIN_ARC_MIN = 4;
+/**
+ * First sample on an arc. By 0.09s the soles are already 80px up, so no part
+ * of an arc can be swept up by simply running underneath it — an arc is only
+ * ever paid to a jump that was actually committed.
+ */
+const COIN_T0 = 0.09;
+const COIN_LINE_STEP = 62;
+/** Coins stop this far short of the next obstacle's leading edge. */
+const COIN_GATE_PAD = 70;
+/**
+ * Runway an arc must leave between where it puts the runner back on the floor
+ * and the next obstacle: a landing, the slide setup in case that obstacle is a
+ * beam, and a full reaction on top.
+ *
+ * Without it a coin line could be laid across a gap that is long enough to fly
+ * but not long enough to fly AND answer what comes next, which is the one way
+ * an optional pickup could still take a run — the player did nothing wrong, the
+ * line did.
+ */
+const COIN_LAND_MARGIN = LAND_RECOVER + SLIDE_SETUP + REACT_MIN;
+/** Obstacles are inflated by this before an arc is tested against them. */
+const COIN_SAFE_PAD = 14;
+const COIN_ARC_CHANCE = 0.62;
+const COIN_OPEN_CHANCE = 0.22;
+const COIN_BEAM_CHANCE = 0.5;
+const COIN_VALUE = 22;
+/** Multiplier band. Every skim and every coin is scaled by it. */
+const MULT_MAX = 3;
+const MULT_GAIN = 0.16;
+/** Per second, once the hold has lapsed. Two skipped arcs and it is gone. */
+const MULT_DECAY = 0.26;
+/** Grace after a pickup, so an arc is not already bleeding as it is collected. */
+const MULT_HOLD = 0.9;
 
 // --- Difficulty stages ------------------------------------------------------
 const STAGE_SECONDS = 15;
 const STAGE_BEAMS = 1;
 const STAGE_PITS = 2;
+const STAGE_ROOFS = 3;
+const STAGE_PAIRS = 4;
+const ROOF_CHANCE = 0.16;
 const STAGE_NAMES: readonly string[] = [
   "DASH",
   "LOW BEAMS",
   "PITFALLS",
+  "LOW ROOF",
+  "LINKED",
   "FULL SPEED",
   "NO MERCY",
 ];
 const STAGE_SUBS: readonly string[] = [
-  "JUMP: SPACE OR TAP - HOLD IT FOR HEIGHT",
+  "HOLD THE JUMP FOR HEIGHT - COINS RIDE THE FULL ARC",
   "SLIDE UNDER: DOWN ARROW, OR TAP AS IT NEARS",
   "MIND THE HOLES",
+  "AMBER ROOF - DO NOT JUMP, JUST RUN",
+  "TWO IN A ROW - THE RAIL MARKS THE PAIR",
   "IT ONLY GETS FASTER",
   "STILL RUNNING",
 ];
 const BANNER_TIME = 2.1;
-const BANNER_W = 500;
+const BANNER_W = 560;
 const BANNER_H = 74;
 const BANNER_Y = 74;
 
@@ -234,8 +375,18 @@ const NEAR_LEAD = 70;
 const NEAR_BASE = 25;
 const NEAR_PER_COMBO = 6;
 const NEAR_COMBO_CAP = 12;
+/** Paid for running a whole roof out without flinching. */
+const NERVE_BONUS = 30;
+/** Paid for clearing both halves of a compound pair. */
+const LINK_BONUS = 40;
 /** Combo lapses if a whole obstacle goes by without a skim. */
 const COMBO_DECAY = 4;
+
+// --- Multiplier gauge -------------------------------------------------------
+const GAUGE_X = 44;
+const GAUGE_Y = 638;
+const GAUGE_W = 190;
+const GAUGE_H = 10;
 
 // --- Parallax ---------------------------------------------------------------
 // Fixed tiling layers. Numbers only: a repeating skyline costs one path per
@@ -286,26 +437,49 @@ function airTimeAbove(h: number): number {
   if (h >= APEX) return 0;
   const disc = JUMP_V * JUMP_V - 2 * G_RISE * h;
   const tUp = (JUMP_V - Math.sqrt(Math.max(0, disc))) / G_RISE;
-  const riseAbove = JUMP_V / G_RISE - tUp;
+  const riseAbove = T_RISE - tUp;
   const fallAbove = Math.sqrt((2 * (APEX - h)) / G_FALL);
   return riseAbove + fallAbove;
 }
 
 /**
+ * Height of the soles above the floor `t` seconds into a full, uncut jump.
+ *
+ * Coin arcs are sampled straight off this, which is the whole trick behind
+ * them: a coin line is a drawing of a trajectory the runner can actually fly,
+ * not a decoration laid over one.
+ */
+function arcHeight(t: number): number {
+  if (t <= T_RISE) return JUMP_V * t - 0.5 * G_RISE * t * t;
+  const f = t - T_RISE;
+  return APEX - 0.5 * G_FALL * f * f;
+}
+
+/**
  * DASH RUN, endless side-scrolling runner.
  *
- * The runner is pinned at RUN_X and the world scrolls past. Everything the
- * game asks of the player is one of three answers — jump, slide, or jump a
- * hole — and the entire design effort is in guaranteeing that the answer is
- * always available in time. See gapTimeFor() and the three size clamps in
- * spawnObstacle(): no obstacle is ever committed that the current speed cannot
- * clear.
+ * The runner is pinned at RUN_X and the world scrolls past. There are three
+ * answers — jump it, slide under it, or hold still and let the roof pass over
+ * you — plus one optional question, the coin arcs, which are the only thing in
+ * the game that asks for a bigger jump than survival needs.
+ *
+ * The entire design effort is in guaranteeing the answer is available in time.
+ * See gapTimeFor() and pairGapTime() for the spacing floors, the size clamps in
+ * shapeObstacle() for the shapes, and bodySafeAt() for the coins: nothing is
+ * ever committed that the speed it arrives at cannot clear.
  */
 export class RunnerGame extends BaseGame {
-  private readonly obstacles = createObstaclePool(10);
+  private readonly obstacles = createObstaclePool(12);
+  private readonly coins = createCoinPool(48);
   /** Scratch rects for the kill test. Mutated in place, never re-created. */
   private readonly rBody: Rect = { x: 0, y: 0, w: 0, h: 0 };
   private readonly rObs: Rect = { x: 0, y: 0, w: 0, h: 0 };
+  /** Full body box, no forgiveness inset: pickups should be generous. */
+  private readonly rPick: Rect = { x: 0, y: 0, w: 0, h: 0 };
+  private readonly cCoin: Circle = { x: 0, y: 0, r: COIN_R + COIN_GRAB };
+  /** Candidate coin line, held here until every sample has been verified. */
+  private readonly arcX = new Float64Array(COIN_ARC_MAX);
+  private readonly arcY = new Float64Array(COIN_ARC_MAX);
   /** One reused options object behind every particle. See puff(). */
   private readonly po: ParticleOptions = {
     x: 0,
@@ -325,8 +499,8 @@ export class RunnerGame extends BaseGame {
   };
   private readonly stats: HudStat[] = [
     { label: "DIST", value: "0m" },
-    { label: "NEAR", value: "0" },
-    { label: "COMBO", value: "-", highlight: true },
+    { label: "MULT", value: "x1.0", highlight: true },
+    { label: "COMBO", value: "-" },
   ];
 
   // --- Runner state ---------------------------------------------------------
@@ -365,23 +539,29 @@ export class RunnerGame extends BaseGame {
   private dist = 0;
   private speed = SPEED_FROM;
   private poolCursor = 0;
+  private coinCursor = 0;
   /** Floor distance still to travel before the next obstacle is born. */
   private toNextSpawn = 0;
   private lastKind: ObstacleKind = KIND_BLOCK;
   /** Decided one spawn ahead: the gap being booked has two ends, not one. */
   private nextKind: ObstacleKind = KIND_BLOCK;
+  /** Rolling id so a pair lead can find its own tail without a map. */
+  private group = 0;
 
   // --- Score ---------------------------------------------------------------
   private bonus = 0;
-  private nearCount = 0;
   private combo = 0;
   private comboTimer = 0;
   private comboLabel = "";
   private popText = "";
   private popTimer = 0;
+  /** Live score multiplier, fed by coins and bled by ignoring them. */
+  private mult = 1;
+  private multHold = 0;
+  private multLabel = "x1.0";
   /** Last values the HUD strings were built from. See hudStats(). */
   private metersShown = -1;
-  private nearShown = -1;
+  private multShown = -1;
 
   // --- Presentation --------------------------------------------------------
   private curStage = -1;
@@ -401,12 +581,15 @@ export class RunnerGame extends BaseGame {
   private deadX = 0;
 
   constructor(services: GameServices) {
-    super(services, 520);
+    super(services, 560);
   }
 
   protected onReset(): void {
     for (let i = 0; i < this.obstacles.length; i++) this.obstacles[i].active = false;
+    for (let i = 0; i < this.coins.length; i++) this.coins[i].active = false;
     this.poolCursor = 0;
+    this.coinCursor = 0;
+    this.group = 0;
 
     this.feetY = GROUND_Y;
     this.vy = 0;
@@ -429,22 +612,24 @@ export class RunnerGame extends BaseGame {
 
     this.dist = 0;
     this.speed = SPEED_FROM;
-    // A short runway before the first spawn, on top of the ~2.2s an obstacle
-    // needs to travel from SPAWN_X. OPENING_GRACE is covered several times over.
-    this.toNextSpawn = SPEED_FROM * 0.7;
+    // A short runway on top of the ~2.3s an obstacle needs to travel in from
+    // SPAWN_X. OPENING_GRACE is covered several times over.
+    this.toNextSpawn = SPEED_FROM * 0.35;
     this.lastKind = KIND_BLOCK;
     this.nextKind = KIND_BLOCK;
 
     this.bonus = 0;
-    this.nearCount = 0;
     this.combo = 0;
     this.comboTimer = 0;
     this.comboLabel = "";
     this.popText = "";
     this.popTimer = 0;
+    this.mult = 1;
+    this.multHold = 0;
+    this.multLabel = "x1.0";
     // -1 forces both labels to rebuild on the first frame of the new run.
     this.metersShown = -1;
-    this.nearShown = -1;
+    this.multShown = -1;
 
     this.curStage = -1;
     this.bannerT = 0;
@@ -471,10 +656,7 @@ export class RunnerGame extends BaseGame {
       this.metersShown = m;
       this.stats[0].value = m + "m";
     }
-    if (this.nearCount !== this.nearShown) {
-      this.nearShown = this.nearCount;
-      this.stats[1].value = String(this.nearCount);
-    }
+    this.stats[1].value = this.multLabel;
     this.stats[2].value = this.combo > 1 ? this.comboLabel : "-";
     return this.stats;
   }
@@ -492,6 +674,7 @@ export class RunnerGame extends BaseGame {
     if (this.bannerT > 0) this.bannerT -= dt;
     if (this.popTimer > 0) this.popTimer -= dt;
     if (this.squash > 0) this.squash = Math.max(0, this.squash - dt * 5.5);
+    this.decayMult(dt);
     if (this.comboTimer > 0) {
       this.comboTimer -= dt;
       if (this.comboTimer <= 0 && this.combo >= 3) {
@@ -518,6 +701,49 @@ export class RunnerGame extends BaseGame {
     return rampAsymptotic(t, SPEED_FROM, SPEED_RANGE, SPEED_HALF);
   }
 
+  /**
+   * The speed the obstacle being spawned right now will actually be met at.
+   *
+   * Sizing against the current speed would quietly shave the reaction window,
+   * because the run is faster by the time the shape arrives. `extra` pushes the
+   * estimate further out for the second half of a pair.
+   */
+  private arrivalSpeed(extra: number): number {
+    const travel = (SPAWN_X - RUN_X) / this.speed;
+    return this.speedAt(this.elapsed + travel + extra);
+  }
+
+  /**
+   * Speed used for every size clamp, deliberately shaded low. Under-estimating
+   * narrows blocks, beams and pits, so the error can only ever make a shape
+   * easier to clear than the arithmetic promised.
+   */
+  private sizingSpeed(): number {
+    return this.arrivalSpeed(0) * 0.97;
+  }
+
+  /**
+   * Speed used to turn gap times into pixels, deliberately shaded high: a gap
+   * measured against a faster run is a longer gap, so the error can only ever
+   * hand the player more room than the floor demands.
+   */
+  private gapSpeed(): number {
+    return this.arrivalSpeed(1.2);
+  }
+
+  private decayMult(dt: number): void {
+    if (this.multHold > 0) {
+      this.multHold -= dt;
+    } else if (this.mult > 1) {
+      this.mult = Math.max(1, this.mult - MULT_DECAY * dt);
+    }
+    const shown = Math.round(this.mult * 10);
+    if (shown !== this.multShown) {
+      this.multShown = shown;
+      this.multLabel = "x" + (shown / 10).toFixed(1);
+    }
+  }
+
   private checkStage(): void {
     const st = stage(this.elapsed, STAGE_SECONDS);
     if (st === this.curStage) return;
@@ -537,13 +763,27 @@ export class RunnerGame extends BaseGame {
 
   private scrollWorld(dt: number): void {
     const step = this.speed * dt;
+    const warnAt = RUN_X + this.speed * ROOF_WARN_LEAD;
     for (let i = 0; i < this.obstacles.length; i++) {
       const o = this.obstacles[i];
       if (!o.active) continue;
       o.x -= step;
+      // The roof is the only obstacle whose answer is to do nothing, so it is
+      // the only one that gets a sound of its own on approach: by the time it
+      // is close enough to read, the instinct has already fired.
+      if (o.kind === KIND_CEIL && !o.warned && o.x < warnAt) {
+        o.warned = true;
+        this.audio.play("warn", 0.62, 0.5);
+      }
       // Kept alive well past the runner so the near-miss payout has already
       // resolved before the slot is recycled.
       if (o.x + o.w < -120) o.active = false;
+    }
+    for (let i = 0; i < this.coins.length; i++) {
+      const c = this.coins[i];
+      if (!c.active) continue;
+      c.x -= step;
+      if (c.x < -40) c.active = false;
     }
 
     this.toNextSpawn -= step;
@@ -551,31 +791,72 @@ export class RunnerGame extends BaseGame {
   }
 
   /**
-   * Picks a kind, sizes it against the speed it will actually be met at, and
-   * books the runway the next one must wait for.
+   * Spawns the next challenge: one obstacle, or a compound pair committed as a
+   * single unit, plus whatever coin line decorates it.
    *
-   * Every clamp in here is a fairness guarantee, not decoration: the size
-   * limits are derived from the real jump arc and the real slide duration, so
-   * a shape that cannot be cleared is never committed in the first place.
+   * Both halves of a pair are placed here rather than one now and one later,
+   * because the gap between them is derived from the speed at this instant —
+   * deciding the tail separately would measure it against a different number.
    */
   private spawnObstacle(): void {
-    const o = this.acquire();
-    if (!o) {
+    const lead = this.acquire();
+    if (!lead) {
       // Pool exhausted (impossible at these gaps, but a dropped spawn is
       // better than recycling something still on screen). Try again shortly.
       this.toNextSpawn = 300;
       return;
     }
 
-    // The speed this obstacle will be met at, not the speed right now.
-    const s = this.speedAt(this.elapsed + SPEED_LOOKAHEAD);
+    const sw = this.sizingSpeed();
+    const sg = this.gapSpeed();
     const st = this.curStage;
     // Rolled one spawn early. The runway booked at the bottom is the gap
     // between THIS obstacle and the one after it, so both ends have to be known
     // before it can be measured — deciding only one end put the slide-setup
     // beat on the wrong gap, and "pit then beam" lost its 0.18s.
     const kind = this.nextKind;
+    this.shapeObstacle(lead, kind, sw, st);
 
+    const tailKind = this.pairPartner(kind, st);
+    if (tailKind !== -1) {
+      const tail = this.acquire();
+      if (tail) {
+        const gapT = this.pairGapTime(kind, tailKind, lead.w, sg);
+        this.shapeObstacle(tail, tailKind, sw, st);
+        tail.x = SPAWN_X + lead.w + BODY_SPAN + sg * gapT;
+        this.group++;
+        lead.link = LINK_LEAD;
+        lead.group = this.group;
+        lead.linkKind = tailKind;
+        tail.link = LINK_TAIL;
+        tail.group = this.group;
+        tail.linkKind = kind;
+        this.lastKind = tailKind;
+        this.nextKind = this.pickKind(st);
+        this.toNextSpawn =
+          tail.x - SPAWN_X + tail.w + BODY_SPAN + sg * this.gapTimeFor(tailKind, this.nextKind);
+        this.spawnCoinsFor(lead, sw, tail.x);
+        this.spawnCoinsFor(tail, sw, SPAWN_X + this.toNextSpawn);
+        return;
+      }
+    }
+
+    // pickKind reads lastKind for its beam bias, so the roll happens after the
+    // just-spawned kind is recorded, not before it.
+    this.lastKind = kind;
+    this.nextKind = this.pickKind(st);
+    this.toNextSpawn = lead.w + BODY_SPAN + sg * this.gapTimeFor(kind, this.nextKind);
+    this.spawnCoinsFor(lead, sw, SPAWN_X + this.toNextSpawn);
+  }
+
+  /**
+   * Sizes one obstacle against the speed it will actually be met at.
+   *
+   * Every clamp in here is a fairness guarantee, not decoration: the limits are
+   * derived from the real jump arc, the real slide duration and the real
+   * standing height, so a shape that cannot be answered is never committed.
+   */
+  private shapeObstacle(o: Obstacle, kind: ObstacleKind, s: number, st: number): void {
     o.active = true;
     o.kind = kind;
     o.x = SPAWN_X;
@@ -583,6 +864,10 @@ export class RunnerGame extends BaseGame {
     o.scored = false;
     o.phase = randRange(0, TAU);
     o.tint = 0;
+    o.link = LINK_NONE;
+    o.group = 0;
+    o.linkKind = kind;
+    o.warned = false;
 
     if (kind === KIND_BLOCK) {
       // Taller blocks late, but never past BLOCK_H_MAX: the arc peaks at 192px
@@ -601,6 +886,11 @@ export class RunnerGame extends BaseGame {
       // to be crossable inside it. Held and computed slides only ever give more.
       const budget = SLIDE_TAP * BEAM_CROSS_SAFETY * s - 2 * HW;
       o.w = widthWithin(BEAM_W_MIN, BEAM_W_MAX, budget);
+    } else if (kind === KIND_CEIL) {
+      o.h = ROOF_CLEAR;
+      // Length is a duration, not a distance: at any speed a roof is the same
+      // number of seconds of holding still, which is what it actually costs.
+      o.w = clamp(s * randRange(ROOF_TIME_MIN, ROOF_TIME_MAX), ROOF_W_MIN, ROOF_W_MAX);
     } else {
       // A pit may only claim a slice of the arc, so the take-off point is a
       // window rather than a frame.
@@ -608,12 +898,6 @@ export class RunnerGame extends BaseGame {
       o.w = widthWithin(PIT_W_MIN, PIT_W_MAX, budget);
       o.h = 0;
     }
-
-    // pickKind reads lastKind for its beam bias, so the roll happens after the
-    // just-spawned kind is recorded, not before it.
-    this.lastKind = kind;
-    this.nextKind = this.pickKind(st);
-    this.toNextSpawn = o.w + s * this.gapTimeFor(kind, this.nextKind);
   }
 
   /**
@@ -624,29 +908,100 @@ export class RunnerGame extends BaseGame {
    * window, plus whatever this particular pairing costs on top.
    */
   private gapTimeFor(prev: ObstacleKind, next: ObstacleKind): number {
-    let floor = MIN_GAP_TIME;
+    let floor = MIN_GAP_TIME + GAP_DRIFT_PAD;
     // After a block or a pit the player may still be in the air; they have to
-    // land before they can answer the next thing at all.
-    if (prev !== KIND_BEAM) floor += LAND_RECOVER;
+    // land before they can answer the next thing at all. A beam or a roof is
+    // run through on the floor, so neither owes that beat.
+    if (prev === KIND_BLOCK || prev === KIND_PIT) floor += LAND_RECOVER;
     // A slide has to be started from the floor, so a beam needs its own beat
     // on top. This is what stops "pit then beam" from being unanswerable.
     if (next === KIND_BEAM) floor += SLIDE_SETUP;
+    // A roof has to be entered already settled: arriving mid-arc would kill a
+    // player who did everything right on the obstacle before it.
+    if (next === KIND_CEIL) floor += ROOF_SETTLE;
     const ramp =
       rampLinear(this.elapsed, GAP_TIME_FROM, GAP_TIME_TO, GAP_TIME_SECONDS) +
-      randRange(0, GAP_JITTER);
+      randRange(0, rampLinear(this.elapsed, JITTER_FROM, JITTER_TO, GAP_TIME_SECONDS));
     return Math.max(floor, ramp);
+  }
+
+  /**
+   * Gap inside a compound pair, in seconds from the lead's trailing edge to the
+   * tail's leading edge. Tighter than gapTimeFor, and derived rather than
+   * guessed.
+   *
+   * Jump first: the worst case is a take-off at the very leading edge of the
+   * lead, so the runner is airborne for the whole AIR_MAX and lands
+   * AIR_MAX * s further on, having already spent `leadW` of the gap in the air.
+   * What is left has to cover the landing, the pose change if the tail is a
+   * beam, and the press:
+   *     leadW / s + T - AIR_MAX - COYOTE >= LAND_RECOVER + SLIDE_SETUP + PAIR_REACT
+   * COYOTE is in there because the latest take-off is not the leading edge: off
+   * a pit lip the jump still registers a tenth of a second later, and the whole
+   * arc shifts with it. Charging every jump-first pair for it costs one frame
+   * of tension on the blocks and removes an entire class of unclearable pit
+   * pairs, which is a trade worth making twice over.
+   *
+   * Slide first: a jump can be taken straight out of the slide pose (startJump
+   * ends the slide), so all the gap has to buy is the pose change and the press.
+   */
+  private pairGapTime(lead: ObstacleKind, tail: ObstacleKind, leadW: number, s: number): number {
+    if (lead === KIND_BEAM) {
+      return Math.max(
+        PAIR_MIN_TIME,
+        PAIR_SLIDE_EXIT + PAIR_REACT + PAIR_JUMP_PREP + GAP_DRIFT_PAD
+      );
+    }
+    const t =
+      AIR_MAX +
+      COYOTE +
+      GAP_DRIFT_PAD +
+      LAND_RECOVER +
+      PAIR_REACT +
+      (tail === KIND_BEAM ? SLIDE_SETUP : 0) -
+      leadW / s;
+    return Math.max(PAIR_MIN_TIME, t);
+  }
+
+  /**
+   * Partner kind for a compound pair, or -1 for a plain single.
+   *
+   * Pairs only ever chain two different verbs or two different shapes; two
+   * identical blocks back to back is a rhythm, not a decision. The roof is
+   * never part of one: its whole content is a long stretch of doing nothing,
+   * and bolting a second beat onto it would just be a normal gap.
+   */
+  private pairPartner(lead: ObstacleKind, st: number): ObstacleKind | -1 {
+    if (st < STAGE_PAIRS || lead === KIND_CEIL) return -1;
+    const chance = rampLinear(
+      this.elapsed - STAGE_PAIRS * STAGE_SECONDS,
+      PAIR_CHANCE_FROM,
+      PAIR_CHANCE_TO,
+      PAIR_CHANCE_SECONDS
+    );
+    if (Math.random() > chance) return -1;
+    // Slide then jump: the tightest pair in the game, and the only one whose
+    // two halves are on screen together.
+    if (lead === KIND_BEAM) return Math.random() < 0.6 ? KIND_BLOCK : KIND_PIT;
+    // Jump then slide, or two hops off different shapes.
+    if (Math.random() < 0.55) return KIND_BEAM;
+    return lead === KIND_BLOCK ? KIND_PIT : KIND_BLOCK;
   }
 
   /** Weighted kind roll. Variety unlocks in stages, like the other games. */
   private pickKind(st: number): ObstacleKind {
-    const r = Math.random();
     if (st < STAGE_BEAMS) return KIND_BLOCK;
-    if (st < STAGE_PITS) return r < 0.62 ? KIND_BLOCK : KIND_BEAM;
+    if (st < STAGE_PITS) return Math.random() < 0.62 ? KIND_BLOCK : KIND_BEAM;
+    // Two roofs in a row would be one long roof with a seam in it.
+    if (st >= STAGE_ROOFS && this.lastKind !== KIND_CEIL && Math.random() < ROOF_CHANCE) {
+      return KIND_CEIL;
+    }
+    const r = Math.random();
     // Two blocks in a row is fine; two beams in a row is a rhythm the player
     // solves once, so a beam biases the next roll away from itself.
     if (this.lastKind === KIND_BEAM) return r < 0.6 ? KIND_BLOCK : KIND_PIT;
-    if (r < 0.44) return KIND_BLOCK;
-    if (r < 0.74) return KIND_BEAM;
+    if (r < 0.42) return KIND_BLOCK;
+    if (r < 0.72) return KIND_BEAM;
     return KIND_PIT;
   }
 
@@ -661,6 +1016,181 @@ export class RunnerGame extends BaseGame {
       }
     }
     return null;
+  }
+
+  // --- Coins ---------------------------------------------------------------
+
+  /**
+   * Decides what, if anything, a freshly spawned obstacle is worth collecting
+   * over. `gateX` is where the next obstacle's leading edge will be, in today's
+   * screen coordinates — coin lines are not allowed to reach it.
+   */
+  private spawnCoinsFor(o: Obstacle, s: number, gateX: number): void {
+    const r = Math.random();
+    if (o.kind === KIND_CEIL) {
+      // The reward for restraint, and a second telegraph: the coins sit at
+      // running height, so the line itself says the answer is to keep running.
+      this.spawnLine(o.x + 40, o.x + o.w - 40, STAND_H);
+      return;
+    }
+    if (o.kind === KIND_BEAM) {
+      if (r < COIN_BEAM_CHANCE) this.spawnLine(o.x + 24, o.x + o.w - 24, SLIDE_H);
+      return;
+    }
+    if (r < COIN_ARC_CHANCE) {
+      // Apex over the middle of the shape. Both halves of the arc then hang
+      // outside it, which is exactly the line a committed jump flies.
+      this.spawnArc(o.x + o.w * 0.5 - s * T_RISE, s, gateX);
+      return;
+    }
+    if (r < COIN_ARC_CHANCE + COIN_OPEN_CHANCE) {
+      // Out in the open, where nothing forces a jump at all. This is the only
+      // coin line in the game that is pure appetite, so it is also the one that
+      // has to prove it fits: the take-off window runs from a landing beat
+      // after the obstacle behind it to the last point whose whole arc still
+      // clears COIN_LAND_MARGIN before the obstacle ahead.
+      const from = o.x + o.w + s * LAND_RECOVER;
+      const to = gateX - s * (COIN_LAND_MARGIN + AIR_MAX);
+      if (to > from) this.spawnArc((from + to) * 0.5, s, gateX);
+    }
+  }
+
+  /**
+   * Lays coins along the real jump arc from a take-off at `takeoffX`.
+   *
+   * Every sample is checked as a body, not as a point: bodySafeAt asks whether
+   * a runner whose soles are on the arc at that instant clears everything on
+   * the field. One failed sample throws the whole line away rather than
+   * trimming it, because a coin the player takes is a commitment to the rest of
+   * the arc — half a safe line is an invitation into the half that is not.
+   */
+  private spawnArc(takeoffX: number, s: number, gateX: number): void {
+    if (takeoffX < RUN_X + 200) return;
+    // The line advertises a full arc, so the full arc has to end early enough
+    // to answer whatever comes next. Enforced here rather than at each call
+    // site, so no future caller can route around it.
+    if (takeoffX + s * (AIR_MAX + COIN_LAND_MARGIN) > gateX) return;
+    const step = (AIR_MAX - COIN_T0 * 2) / (COIN_ARC_MAX - 1);
+    let n = 0;
+    for (let i = 0; i < COIN_ARC_MAX; i++) {
+      const t = COIN_T0 + i * step;
+      const x = takeoffX + s * t;
+      if (x > gateX - COIN_GATE_PAD) break;
+      const feet = GROUND_Y - arcHeight(t);
+      if (!this.bodySafeAt(x, feet, STAND_H)) return;
+      this.arcX[n] = x;
+      this.arcY[n] = feet - COIN_RIDE;
+      n++;
+    }
+    if (n < COIN_ARC_MIN) return;
+    for (let i = 0; i < n; i++) this.placeCoin(this.arcX[i], this.arcY[i]);
+  }
+
+  /**
+   * Flat line of coins at body height on the floor, for the two obstacles that
+   * are answered without leaving it. Same verification as an arc: the pose that
+   * collects them has to fit everywhere the line goes.
+   */
+  private spawnLine(from: number, to: number, bodyH: number): void {
+    const span = to - from;
+    if (span < COIN_LINE_STEP) return;
+    const n = Math.min(COIN_ARC_MAX, Math.max(2, Math.round(span / COIN_LINE_STEP) + 1));
+    const step = span / (n - 1);
+    const y = GROUND_Y - bodyH * 0.5;
+    for (let i = 0; i < n; i++) {
+      const x = from + i * step;
+      if (!this.bodySafeAt(x, GROUND_Y, bodyH)) return;
+      this.arcX[i] = x;
+    }
+    for (let i = 0; i < n; i++) this.placeCoin(this.arcX[i], y);
+  }
+
+  /**
+   * True when a runner of `bodyH` with its soles at `feetY` would be clear of
+   * everything on the field at `x`, with COIN_SAFE_PAD to spare.
+   *
+   * This is the guarantee behind every coin: the line is only laid where the
+   * body that would be collecting it fits. Obstacles are inflated rather than
+   * measured exactly, so "just barely fits" never becomes a coin.
+   */
+  private bodySafeAt(x: number, feetY: number, bodyH: number): boolean {
+    const left = x - HW - COIN_SAFE_PAD;
+    const right = x + HW + COIN_SAFE_PAD;
+    const top = feetY - bodyH - COIN_SAFE_PAD;
+    const bottom = feetY + COIN_SAFE_PAD;
+    if (top < PANEL_PAD + 12) return false;
+    for (let i = 0; i < this.obstacles.length; i++) {
+      const o = this.obstacles[i];
+      if (!o.active) continue;
+      if (right < o.x || left > o.x + o.w) continue;
+      if (o.kind === KIND_BLOCK) {
+        if (bottom > GROUND_Y - o.h) return false;
+      } else if (o.kind === KIND_BEAM || o.kind === KIND_CEIL) {
+        if (top < GROUND_Y - o.h) return false;
+      } else if (bottom > GROUND_Y - 24) {
+        // Floor height over a hole: the line would be drawing a run into it.
+        return false;
+      }
+    }
+    return true;
+  }
+
+  private placeCoin(x: number, y: number): void {
+    const n = this.coins.length;
+    for (let i = 0; i < n; i++) {
+      const idx = (this.coinCursor + i) % n;
+      const c = this.coins[idx];
+      if (c.active) continue;
+      this.coinCursor = (idx + 1) % n;
+      c.active = true;
+      c.x = x;
+      c.y = y;
+      c.phase = randRange(0, TAU);
+      return;
+    }
+  }
+
+  /** Uses the un-inset body box: a pickup should be easier than a hit. */
+  private collectCoins(): void {
+    const c = this.cCoin;
+    for (let i = 0; i < this.coins.length; i++) {
+      const coin = this.coins[i];
+      if (!coin.active) continue;
+      if (coin.x < RUN_X - 60 || coin.x > RUN_X + 60) continue;
+      c.x = coin.x;
+      c.y = coin.y;
+      if (!circleRectHit(c, this.rPick)) continue;
+      coin.active = false;
+      this.takeCoin(coin.x, coin.y);
+    }
+  }
+
+  private takeCoin(x: number, y: number): void {
+    this.mult = Math.min(MULT_MAX, this.mult + MULT_GAIN);
+    this.multHold = MULT_HOLD;
+    const gain = Math.round(COIN_VALUE * this.mult);
+    this.bonus += gain;
+    this.popText = "+" + gain;
+    this.popTimer = 0.6;
+    // Pitch rides the multiplier, so a full arc audibly climbs as it is eaten.
+    this.audio.play("score", 0.85 + this.mult * 0.3, 0.38);
+    for (let i = 0; i < 6; i++) {
+      const a = (i / 6) * TAU + randRange(-0.3, 0.3);
+      const sp = randRange(80, 210);
+      this.puff(
+        x,
+        y,
+        Math.cos(a) * sp,
+        Math.sin(a) * sp - 40,
+        randRange(0.22, 0.4),
+        randRange(2, 3.6),
+        0,
+        i % 2 === 0 ? COIN_FILL : COIN_CORE,
+        "circle",
+        0.22
+      );
+    }
+    this.puff(x, y, 0, 0, 0.26, 5, 0, COIN_FILL, "ring", 1);
   }
 
   // --- Runner --------------------------------------------------------------
@@ -694,7 +1224,9 @@ export class RunnerGame extends BaseGame {
    * the next thing ahead is not a beam within BEAM_TAKEOVER.
    *
    * Only the NEAREST obstacle may own the button. A beam sitting behind a pit
-   * must never turn the jump that clears the pit into a slide into it.
+   * must never turn the jump that clears the pit into a slide into it — and a
+   * beam behind a roof must never be the reason a press under the roof was
+   * survivable, because under a roof a press has to mean what it says.
    */
   private beamLead(): number {
     let lead = Infinity;
@@ -832,7 +1364,16 @@ export class RunnerGame extends BaseGame {
       // With a beam in range the press buys exactly the cover that beam needs,
       // so both input channels answer it the same way and neither can stand the
       // runner up a few pixels short of the slab.
-      if (downEdge && !this.sliding) {
+      //
+      // The hold is admitted as a press once a beam owns the button, and only
+      // then. A held key produces no further edges, so a player who pressed
+      // Down before the beam existed is stood up by the cap below and can never
+      // get back down without releasing first — they hold SLIDE, watch the slab
+      // arrive, and die with the right key under their thumb. Inside the
+      // takeover window the hold means what it obviously means; outside it the
+      // cap still denies a permanent crouch, which is the only thing the cap
+      // was ever for.
+      if ((downEdge || (downHeld && beam >= 0)) && !this.sliding) {
         this.startSlide(beam >= 0 ? coverSlide(beam) : SLIDE_MIN);
       }
       if (this.sliding) {
@@ -859,6 +1400,11 @@ export class RunnerGame extends BaseGame {
     this.airTime = 0;
     this.jumpCut = false;
     this.vy = -JUMP_V;
+    // A duck books its slide for the next landing. Jumping instead retracts
+    // that request: off a pit lip the coyote window lets a duck and a jump both
+    // land inside the same airborne stretch, and the landing should not then
+    // owe a slide nobody is still asking for.
+    this.pendingSlide = 0;
     if (this.sliding) this.endSlide();
     this.squash = 0;
 
@@ -1020,7 +1566,7 @@ export class RunnerGame extends BaseGame {
     );
   }
 
-  // --- Collision and near misses -------------------------------------------
+  // --- Collision, near misses and payouts ----------------------------------
 
   private resolveObstacles(): void {
     const grace = this.elapsed <= OPENING_GRACE;
@@ -1033,6 +1579,13 @@ export class RunnerGame extends BaseGame {
     body.y = this.feetY - h + FORGIVE;
     body.h = h - FORGIVE * 2;
     const bodyBottom = body.y + body.h;
+    // The pickup box is the body as drawn, not as collided: coins are the one
+    // thing the player should get the benefit of the doubt on.
+    const pick = this.rPick;
+    pick.x = RUN_X - HW;
+    pick.w = HW * 2;
+    pick.y = this.feetY - h;
+    pick.h = h;
     const obs = this.rObs;
 
     for (let i = 0; i < this.obstacles.length; i++) {
@@ -1045,14 +1598,28 @@ export class RunnerGame extends BaseGame {
           obs.y = GROUND_Y - o.h;
           obs.w = o.w;
           obs.h = o.h;
-        } else {
+        } else if (o.kind === KIND_BEAM) {
           obs.x = o.x;
           obs.y = GROUND_Y - BEAM_TOP_H;
           obs.w = o.w;
           obs.h = BEAM_TOP_H - o.h;
+        } else {
+          // The roof goes all the way to the top of the card: there is no
+          // going over it, which is the entire reason it exists.
+          obs.x = o.x;
+          obs.y = PANEL_PAD;
+          obs.w = o.w;
+          obs.h = GROUND_Y - o.h - PANEL_PAD;
         }
         if (!grace && rectHit(body, obs)) {
-          this.crash(i, o.kind === KIND_BLOCK ? "HIT A BLOCK" : "HIT A BEAM");
+          this.crash(
+            i,
+            o.kind === KIND_BLOCK
+              ? "HIT A BLOCK"
+              : o.kind === KIND_BEAM
+                ? "HIT A BEAM"
+                : "JUMPED INTO THE ROOF"
+          );
           return;
         }
       }
@@ -1066,7 +1633,7 @@ export class RunnerGame extends BaseGame {
         // one, so what counts is the last commitment before the beam arrived
         // rather than some unrelated slide from earlier in the run.
         if (this.slideStarted && o.x > RUN_X) o.minClear = Math.max(0, o.x - (RUN_X + HW));
-      } else if (body.x < o.x + o.w && body.x + body.w > o.x) {
+      } else if (o.kind !== KIND_CEIL && body.x < o.x + o.w && body.x + body.w > o.x) {
         // Smallest vertical gap seen while the two boxes overlapped: over the
         // top of a block, or above the lip of a pit.
         const clear = o.kind === KIND_BLOCK ? GROUND_Y - o.h - bodyBottom : GROUND_Y - bodyBottom;
@@ -1075,26 +1642,40 @@ export class RunnerGame extends BaseGame {
 
       if (!o.scored && o.x + o.w < RUN_X - HW) {
         o.scored = true;
-        const limit = o.kind === KIND_BEAM ? NEAR_LEAD : NEAR_GAP;
-        if (o.minClear >= 0 && o.minClear < limit) this.nearMiss(o);
+        if (o.kind === KIND_CEIL) {
+          // Nothing to skim: the whole skill was in the press that never came,
+          // so surviving the stretch is the payout condition.
+          this.payClear(o, "NERVE", NERVE_BONUS);
+        } else {
+          const limit = o.kind === KIND_BEAM ? NEAR_LEAD : NEAR_GAP;
+          if (o.minClear >= 0 && o.minClear < limit) this.payClear(o, "", 0);
+        }
+        if (o.link === LINK_TAIL) this.payLink();
       }
     }
     this.slideStarted = false;
+    this.collectCoins();
   }
 
-  private nearMiss(o: Obstacle): void {
-    this.nearCount++;
+  /**
+   * Single payout path for a clean pass, so the combo has one owner.
+   * `flat` overrides the near-miss scale for rewards that are not about
+   * millimetres, i.e. the roof.
+   */
+  private payClear(o: Obstacle, label: string, flat: number): void {
     this.combo++;
     this.comboTimer = COMBO_DECAY;
     this.comboLabel = "x" + this.combo;
-    const gain = NEAR_BASE + NEAR_PER_COMBO * Math.min(this.combo - 1, NEAR_COMBO_CAP);
+    const base =
+      flat > 0 ? flat : NEAR_BASE + NEAR_PER_COMBO * Math.min(this.combo - 1, NEAR_COMBO_CAP);
+    const gain = Math.round(base * this.mult);
     this.bonus += gain;
-    this.popText = "+" + gain;
+    this.popText = label ? label + " +" + gain : "+" + gain;
     this.popTimer = 0.75;
 
     // Chips thrown backward along the obstacle, so the skim reads as the thing
     // passing the runner rather than as an impact.
-    const y = o.kind === KIND_BEAM ? this.feetY - this.bodyH() : this.feetY;
+    const y = o.kind === KIND_BLOCK || o.kind === KIND_PIT ? this.feetY : this.feetY - this.bodyH();
     for (let i = 0; i < 7; i++) {
       this.puff(
         RUN_X + randRange(-6, 14),
@@ -1112,6 +1693,30 @@ export class RunnerGame extends BaseGame {
     this.puff(RUN_X, y, 0, 0, 0.3, 6, 0, ACCENT, "ring", 1);
     this.audio.play("graze", 1 + Math.min(this.combo, 20) * 0.04, 0.7);
     this.shake.add(1.2 + Math.min(this.combo, 10) * 0.14, 0.12);
+  }
+
+  /** Paid once, on the tail of a pair, for solving both halves of it. */
+  private payLink(): void {
+    const gain = Math.round(LINK_BONUS * this.mult);
+    this.bonus += gain;
+    this.popText = "LINK +" + gain;
+    this.popTimer = 0.85;
+    this.audio.play("success", 1.1, 0.5);
+    for (let i = 0; i < 10; i++) {
+      this.puff(
+        RUN_X + randRange(-16, 16),
+        this.feetY - this.bodyH() * 0.5,
+        randRange(-260, -60),
+        randRange(-170, 30),
+        randRange(0.3, 0.5),
+        randRange(2.4, 4.4),
+        0,
+        i % 2 === 0 ? ACCENT : ACCENT_DARK,
+        "square",
+        0.3,
+        randRange(0, TAU)
+      );
+    }
   }
 
   // --- Death ---------------------------------------------------------------
@@ -1225,7 +1830,9 @@ export class RunnerGame extends BaseGame {
     this.drawHills(g);
     this.drawMid(g);
     this.drawFloor(g);
+    this.drawLinks(g);
     this.drawObstacles(g);
+    this.drawCoins(g);
     this.drawRunner(g);
     if (this.status === "gameover") this.drawKillMark(g);
     g.restore();
@@ -1312,11 +1919,16 @@ export class RunnerGame extends BaseGame {
     g.stroke();
     g.restore();
 
-    // Pits are punched through afterwards so they cut the line and the ticks.
+    const fade = this.runFade();
     for (let i = 0; i < this.obstacles.length; i++) {
       const o = this.obstacles[i];
-      if (!o.active || o.kind !== KIND_PIT) continue;
-      this.drawPit(g, o, bottom);
+      if (!o.active) continue;
+      // Pits are punched through afterwards so they cut the line and the ticks,
+      // and the roof paints its floor band the same way — the ground half of
+      // the no-jump telegraph, so the warning is under the feet as well as
+      // over the head.
+      if (o.kind === KIND_PIT) this.drawPit(g, o, bottom);
+      else if (o.kind === KIND_CEIL && fade > 0) this.drawRoofZone(g, o, fade);
     }
   }
 
@@ -1344,11 +1956,142 @@ export class RunnerGame extends BaseGame {
     g.restore();
   }
 
+  /** Amber hatching painted on the floor for the length of a roof stretch. */
+  private drawRoofZone(g: CanvasRenderingContext2D, o: Obstacle, fade: number): void {
+    g.save();
+    g.globalAlpha = fade;
+    g.fillStyle = C_ROOF_ZONE;
+    g.fillRect(o.x, GROUND_Y + 4, o.w, 22);
+    g.save();
+    g.beginPath();
+    g.rect(o.x, GROUND_Y + 4, o.w, 22);
+    g.clip();
+    g.strokeStyle = C_ROOF_ZONE_LINE;
+    g.lineWidth = 3;
+    g.beginPath();
+    for (let x = o.x - 22; x < o.x + o.w + 22; x += 22) {
+      g.moveTo(x, GROUND_Y + 28);
+      g.lineTo(x + 18, GROUND_Y + 2);
+    }
+    g.stroke();
+    g.restore();
+    g.restore();
+  }
+
+  /**
+   * The rail that says two obstacles are one challenge.
+   *
+   * Drawn in the floor band under both halves, with a verb glyph on each: an up
+   * arrow for the ones you leave the ground for, a down arrow for the beam. The
+   * tail of a pair is often still off the right edge when the lead arrives —
+   * the gap is longer than the visible runway at speed — so the rail running
+   * off the edge with a glyph on its end IS the telegraph, not a decoration of
+   * one.
+   */
+  private drawLinks(g: CanvasRenderingContext2D): void {
+    const fade = this.runFade();
+    if (fade <= 0) return;
+    // Anchored on the tail, not the lead. The lead is recycled once it is well
+    // behind the runner, and that happens before the far half of a wide pair
+    // has even arrived — a rail that vanished there would drop the marking off
+    // the exact obstacle it was drawn to warn about.
+    for (let i = 0; i < this.obstacles.length; i++) {
+      const tail = this.obstacles[i];
+      if (!tail.active || tail.link !== LINK_TAIL) continue;
+      const endX = tail.x + tail.w;
+      // Off the left edge when the lead is already gone, so the rail still
+      // reads as something that started before the visible half.
+      let startX = -200;
+      let leadX = -1;
+      for (let j = 0; j < this.obstacles.length; j++) {
+        const lead = this.obstacles[j];
+        if (lead.active && lead.link === LINK_LEAD && lead.group === tail.group) {
+          startX = lead.x;
+          leadX = lead.x + lead.w * 0.5;
+          break;
+        }
+      }
+      if (endX < -60 || startX > this.width + 60) continue;
+      // The tail is usually still off the right edge: at speed the pair gap is
+      // longer than the visible runway, so the badge is parked at the border
+      // and that is what announces the second half before it can be seen.
+      const glyphX = Math.min(tail.x + tail.w * 0.5, this.width - 34);
+
+      g.save();
+      g.globalAlpha = fade;
+      g.fillStyle = C_LINK_SOFT;
+      roundRect(g, startX, GROUND_Y + 30, endX - startX, 22, 11);
+      g.fill();
+
+      // Chevrons pointing at the second half, skipped over any open hole. The
+      // rail can be twice the width of the card while the tail is still out
+      // there, so the run is clipped to what can actually be seen.
+      g.strokeStyle = C_LINK;
+      g.lineWidth = 2.5;
+      g.lineJoin = "round";
+      g.beginPath();
+      const from = Math.max(startX + 22, -20);
+      const to = Math.min(endX - 14, this.width + 20);
+      for (let x = from; x < to; x += 34) {
+        if (this.overPit(x)) continue;
+        g.moveTo(x - 4, GROUND_Y + 35);
+        g.lineTo(x + 4, GROUND_Y + 41);
+        g.lineTo(x - 4, GROUND_Y + 47);
+      }
+      g.stroke();
+      g.restore();
+
+      if (leadX >= 0) this.drawVerbGlyph(g, leadX, tail.linkKind, fade);
+      this.drawVerbGlyph(g, glyphX, tail.kind, fade);
+    }
+  }
+
+  /** True when x sits over an open pit, so the rail can skip it. */
+  private overPit(x: number): boolean {
+    for (let i = 0; i < this.obstacles.length; i++) {
+      const o = this.obstacles[i];
+      if (!o.active || o.kind !== KIND_PIT) continue;
+      if (x > o.x - 6 && x < o.x + o.w + 6) return true;
+    }
+    return false;
+  }
+
+  /** Small disc on the rail: up arrow to leave the floor, down arrow to hug it. */
+  private drawVerbGlyph(
+    g: CanvasRenderingContext2D,
+    x: number,
+    kind: ObstacleKind,
+    fade: number
+  ): void {
+    const y = GROUND_Y + 41;
+    g.save();
+    g.globalAlpha = fade;
+    g.fillStyle = C_WHITE;
+    g.beginPath();
+    g.arc(x, y, 12, 0, TAU);
+    g.fill();
+    g.strokeStyle = C_LINK;
+    g.lineWidth = 2;
+    g.stroke();
+    g.strokeStyle = ACCENT_DARK;
+    g.lineWidth = 3;
+    g.lineCap = "round";
+    g.lineJoin = "round";
+    const dir = kind === KIND_BEAM ? 1 : -1;
+    g.beginPath();
+    g.moveTo(x - 6, y + 2 * dir);
+    g.lineTo(x, y - 4 * dir);
+    g.lineTo(x + 6, y + 2 * dir);
+    g.stroke();
+    g.restore();
+  }
+
   private drawObstacles(g: CanvasRenderingContext2D): void {
     const fade = this.runFade();
     if (fade <= 0) return;
     // Cues only while the verbs are still new. A permanent arrow over every
-    // block would be noise by the second minute.
+    // block would be noise by the second minute. The roof is the exception:
+    // its cue never fades, because the instinct it is fighting never does.
     const cue = clamp(1 - (this.elapsed - 18) / 8, 0, 1);
 
     g.save();
@@ -1358,7 +2101,8 @@ export class RunnerGame extends BaseGame {
       if (!o.active || o.kind === KIND_PIT) continue;
       if (o.x > this.width + 60 || o.x + o.w < -60) continue;
       if (o.kind === KIND_BLOCK) this.drawBlock(g, o, cue, fade);
-      else this.drawBeam(g, o, cue, fade);
+      else if (o.kind === KIND_BEAM) this.drawBeam(g, o, cue, fade);
+      else this.drawRoof(g, o, fade);
     }
     g.globalAlpha = 1;
     g.restore();
@@ -1481,6 +2225,127 @@ export class RunnerGame extends BaseGame {
       g.stroke();
       g.globalAlpha = fade;
     }
+  }
+
+  /**
+   * The roof. Everything about it is deliberately unlike the other three: no
+   * candy gloss, no face, no rounded friendliness — a flat amber slab wearing
+   * ink hazard tape on the edge that kills, hanging off the top of the card so
+   * there is visibly nothing above it to clear. The crossed-out jump arrows
+   * spell out the one thing the shape has to communicate before it arrives.
+   */
+  private drawRoof(g: CanvasRenderingContext2D, o: Obstacle, fade: number): void {
+    const bottom = GROUND_Y - o.h;
+    const top = PANEL_PAD - 24;
+
+    g.fillStyle = C_SHADOW_SOFT;
+    g.fillRect(o.x + 5, top, o.w, bottom - top + 7);
+
+    g.fillStyle = CEIL_FILL;
+    roundRect(g, o.x, top, o.w, bottom - top, 10);
+    g.fill();
+    g.strokeStyle = CEIL_LINE;
+    g.lineWidth = 3;
+    g.stroke();
+
+    // Ink diagonals along the underside. Nothing else in the run is striped,
+    // so this is the fastest read on the card.
+    g.save();
+    g.beginPath();
+    g.rect(o.x + 2, bottom - 24, o.w - 4, 22);
+    g.clip();
+    g.strokeStyle = CEIL_TAPE;
+    g.lineWidth = 10;
+    g.beginPath();
+    for (let x = o.x - 30; x < o.x + o.w + 30; x += 28) {
+      g.moveTo(x, bottom + 4);
+      g.lineTo(x + 26, bottom - 28);
+    }
+    g.stroke();
+    g.restore();
+
+    g.strokeStyle = CEIL_LINE;
+    g.lineWidth = 3;
+    g.beginPath();
+    g.moveTo(o.x, bottom);
+    g.lineTo(o.x + o.w, bottom);
+    g.stroke();
+
+    const marks = Math.max(2, Math.round(o.w / 190));
+    for (let i = 0; i < marks; i++) {
+      this.drawNoJump(g, o.x + (o.w * (i + 0.5)) / marks, bottom + 40, o.phase + i, fade);
+    }
+    if (o.w > 300) {
+      text(g, "DO NOT JUMP", o.x + o.w / 2, bottom - 44, {
+        size: 15,
+        color: INK,
+        alpha: 0.85 * fade,
+        letterSpacing: "4px",
+      });
+    }
+  }
+
+  /** Up arrow with a bar through it, pulsing under the slab. */
+  private drawNoJump(
+    g: CanvasRenderingContext2D,
+    x: number,
+    y: number,
+    phase: number,
+    fade: number
+  ): void {
+    const pulse = 0.75 + 0.25 * Math.sin(this.elapsed * 6 + phase);
+    g.save();
+    // Multiplied rather than assigned: this is the one cue drawn at its own
+    // alpha, and assigning would leave it burning at full strength over a
+    // scene that has already faded out from under it.
+    g.globalAlpha = pulse * fade;
+    g.strokeStyle = CEIL_LINE;
+    g.lineWidth = 4;
+    g.lineCap = "round";
+    g.lineJoin = "round";
+    g.beginPath();
+    g.moveTo(x, y + 12);
+    g.lineTo(x, y - 10);
+    g.moveTo(x - 9, y - 1);
+    g.lineTo(x, y - 11);
+    g.lineTo(x + 9, y - 1);
+    g.stroke();
+    g.strokeStyle = INK;
+    g.lineWidth = 4.5;
+    g.beginPath();
+    g.moveTo(x - 14, y + 10);
+    g.lineTo(x + 14, y - 12);
+    g.stroke();
+    g.restore();
+  }
+
+  /** Spinning discs. The only circles in the run, so they never read as hazard. */
+  private drawCoins(g: CanvasRenderingContext2D): void {
+    const fade = this.runFade();
+    if (fade <= 0) return;
+    g.save();
+    g.globalAlpha = fade;
+    g.strokeStyle = COIN_LINE;
+    for (let i = 0; i < this.coins.length; i++) {
+      const c = this.coins[i];
+      if (!c.active) continue;
+      if (c.x < -30 || c.x > this.width + 30) continue;
+      const spin = Math.abs(Math.cos(c.phase + this.elapsed * 5));
+      const w = COIN_R * (0.26 + 0.74 * spin);
+      g.fillStyle = COIN_FILL;
+      g.beginPath();
+      g.ellipse(c.x, c.y, w, COIN_R, 0, 0, TAU);
+      g.fill();
+      g.lineWidth = 2.5;
+      g.stroke();
+      if (w > 4.5) {
+        g.fillStyle = COIN_CORE;
+        g.beginPath();
+        g.ellipse(c.x - w * 0.18, c.y - 2.5, w * 0.34, COIN_R * 0.4, 0, 0, TAU);
+        g.fill();
+      }
+    }
+    g.restore();
   }
 
   /**
@@ -1647,7 +2512,8 @@ export class RunnerGame extends BaseGame {
       x = o.x + o.w / 2;
       g.save();
       g.globalAlpha = (0.4 + 0.4 * pulse) * fade;
-      g.strokeStyle = o.kind === KIND_PIT ? PIT_RIM_LINE : BEAM_LINE;
+      g.strokeStyle =
+        o.kind === KIND_PIT ? PIT_RIM_LINE : o.kind === KIND_CEIL ? CEIL_LINE : BEAM_LINE;
       g.lineWidth = 4;
       if (o.kind === KIND_BLOCK) {
         y = GROUND_Y - o.h - 32;
@@ -1655,6 +2521,9 @@ export class RunnerGame extends BaseGame {
       } else if (o.kind === KIND_BEAM) {
         y = GROUND_Y - o.h + 34;
         roundRect(g, o.x - 6, GROUND_Y - BEAM_TOP_H - 6, o.w + 12, BEAM_TOP_H - o.h + 12, 18);
+      } else if (o.kind === KIND_CEIL) {
+        y = GROUND_Y - o.h + 40;
+        roundRect(g, o.x - 6, PANEL_PAD - 6, o.w + 12, GROUND_Y - o.h - PANEL_PAD + 12, 14);
       } else {
         y = GROUND_Y - 44;
         roundRect(g, o.x - 6, GROUND_Y - 6, o.w + 12, 96, 12);
@@ -1663,7 +2532,7 @@ export class RunnerGame extends BaseGame {
       g.restore();
     }
 
-    text(g, this.killLabel, clamp(x, 90, this.width - 90), clamp(y, 40, GROUND_Y - 16), {
+    text(g, this.killLabel, clamp(x, 110, this.width - 110), clamp(y, 40, GROUND_Y - 16), {
       size: 15,
       color: INK,
       alpha: Math.min(1, t * 4) * 0.9 * fade,
@@ -1691,6 +2560,7 @@ export class RunnerGame extends BaseGame {
   }
 
   protected onRenderOverlay(g: CanvasRenderingContext2D): void {
+    this.drawGauge(g);
     if (this.bannerT <= 0) return;
     const k = this.bannerT / BANNER_TIME;
     // Snap in, hold, drift out. onUpdate stops at death, so bannerT freezes —
@@ -1723,6 +2593,46 @@ export class RunnerGame extends BaseGame {
       size: 11,
       color: INK_DIM,
       alpha: alpha * 0.9,
+      letterSpacing: "3px",
+    });
+  }
+
+  /**
+   * The multiplier, draining in real time.
+   *
+   * A number in the HUD says what the multiplier is; the bar says what it is
+   * doing, which is the part the player is actually deciding against when they
+   * choose whether the next arc is worth a committed jump.
+   */
+  private drawGauge(g: CanvasRenderingContext2D): void {
+    const k = (this.mult - 1) / (MULT_MAX - 1);
+    const alpha = clamp(k * 6, 0, 1) * this.runFade();
+    if (alpha <= 0.01) return;
+    g.save();
+    g.globalAlpha = alpha;
+    g.fillStyle = C_GAUGE_TRACK;
+    roundRect(g, GAUGE_X, GAUGE_Y, GAUGE_W, GAUGE_H, GAUGE_H / 2);
+    g.fill();
+    g.fillStyle = COIN_FILL;
+    roundRect(g, GAUGE_X, GAUGE_Y, Math.max(GAUGE_H, GAUGE_W * k), GAUGE_H, GAUGE_H / 2);
+    g.fill();
+    g.strokeStyle = COIN_LINE;
+    g.lineWidth = 1.5;
+    roundRect(g, GAUGE_X, GAUGE_Y, GAUGE_W, GAUGE_H, GAUGE_H / 2);
+    g.stroke();
+    g.restore();
+    text(g, this.multLabel, GAUGE_X, GAUGE_Y - 14, {
+      size: 15,
+      color: COIN_LINE,
+      align: "left",
+      alpha,
+      letterSpacing: "1px",
+    });
+    text(g, "COINS", GAUGE_X + GAUGE_W, GAUGE_Y - 14, {
+      size: 10,
+      color: INK_DIM,
+      align: "right",
+      alpha: alpha * 0.8,
       letterSpacing: "3px",
     });
   }

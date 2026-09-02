@@ -1,10 +1,13 @@
 import { roundRect, text, type TextOptions, withAlpha } from "@/games/core/draw";
+import { GAME_HEIGHT, GAME_WIDTH } from "@/types/game";
 import {
   AMBER,
   AMBER_DARK,
   CARD,
   dropShadow,
   INK,
+  PLAYER_X,
+  PLAYER_Y,
   ROSE,
   ROSE_DARK,
   ROSE_DEEP,
@@ -19,10 +22,11 @@ export type EnemyPhase = "telegraph" | "approach" | "strike";
 
 /**
  * Seconds of telegraph still remaining when a feint commits to its real side.
- * The post-reveal window is this plus the whole approach (>=0.4s even at the
- * hardest ramp), so a revealed feint is always slower than human reaction time.
+ * The post-reveal window is this plus the whole approach (>=0.39s even at the
+ * hardest ramp), so a revealed feint still leaves more than 0.8s — which is
+ * what an eight-way read needs, not the four-way read this was tuned for.
  */
-export const FEINT_REVEAL = 0.36;
+export const FEINT_REVEAL = 0.42;
 
 export interface Enemy {
   active: boolean;
@@ -33,7 +37,7 @@ export interface Enemy {
    *  still uncommitted, and is amber for the whole uncommitted stretch. */
   flareDir: Dir;
   feint: boolean;
-  /** Telegraph phase: seconds left. Strike phase: clutch window left. */
+  /** Telegraph phase: seconds left. Strike phase: seconds of grace left. */
   t: number;
   /** Full telegraph length, kept for the flare's urgency ramp. */
   telegraph: number;
@@ -44,6 +48,19 @@ export interface Enemy {
   y: number;
   /** Scheduled sim-time of the strike. The spawn guard reasons about this. */
   strikeAt: number;
+  /**
+   * Sim-time the facing last became correct for this enemy, or -1 while it is
+   * wrong. `strikeAt - correctSince` is the time the player had left when they
+   * got their guard round, which is the only thing clutch is measured against.
+   */
+  correctSince: number;
+  /**
+   * Whether this enemy has already spent its one mid-diagonal grace. Once per
+   * enemy: a window re-armed by every turn could be held open forever by
+   * alternating between the two cardinals a diagonal is made of, and that
+   * diagonal would then never be able to land.
+   */
+  composeUsed: boolean;
 }
 
 export function blankEnemy(): Enemy {
@@ -60,6 +77,8 @@ export function blankEnemy(): Enemy {
     x: 0,
     y: 0,
     strikeAt: 0,
+    correctSince: -1,
+    composeUsed: false,
   };
 }
 
@@ -70,17 +89,81 @@ export function isUncommitted(e: Enemy): boolean {
 
 const FEINT_DASH = [8, 7];
 const NO_DASH: number[] = [];
-const BAR_SPAN = 240;
 const BAR_THICK = 14;
 /** Distance of the edge capsule from the arena edge. */
 const BAR_INSET = 6;
+/** A cardinal owns the middle of its edge; a diagonal gets a shorter capsule
+ *  on BOTH edges of its corner, which is what makes eight sides readable in
+ *  peripheral vision without eight separate shapes to learn. */
+const BAR_MAIN = 240;
+const BAR_SIDE = 150;
+const EDGE_L = BAR_INSET;
+const EDGE_R = GAME_WIDTH - BAR_THICK - BAR_INSET;
+const EDGE_T = BAR_INSET;
+const EDGE_B = GAME_HEIGHT - BAR_THICK - BAR_INSET;
+/** Offsets of the diagonal capsules from the cardinal ones. Roughly where the
+ *  diagonal's own ray leaves the arena, and clear of the cardinal capsule so
+ *  "up" and "up-left" are never the same silhouette. */
+const DIAG_OFF_X = 330;
+const DIAG_OFF_Y = 200;
+
+interface EdgeBar {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+}
+
+function vBar(x: number, cy: number, span: number): EdgeBar {
+  return { x, y: cy - span / 2, w: BAR_THICK, h: span };
+}
+
+function hBar(cx: number, y: number, span: number): EdgeBar {
+  return { x: cx - span / 2, y, w: span, h: BAR_THICK };
+}
+
+/** Built once at module load; the render loop only ever reads it. */
+const EDGE_BARS: Record<Dir, readonly EdgeBar[]> = {
+  right: [vBar(EDGE_R, PLAYER_Y, BAR_MAIN)],
+  left: [vBar(EDGE_L, PLAYER_Y, BAR_MAIN)],
+  up: [hBar(PLAYER_X, EDGE_T, BAR_MAIN)],
+  down: [hBar(PLAYER_X, EDGE_B, BAR_MAIN)],
+  upRight: [
+    hBar(PLAYER_X + DIAG_OFF_X, EDGE_T, BAR_SIDE),
+    vBar(EDGE_R, PLAYER_Y - DIAG_OFF_Y, BAR_SIDE),
+  ],
+  upLeft: [
+    hBar(PLAYER_X - DIAG_OFF_X, EDGE_T, BAR_SIDE),
+    vBar(EDGE_L, PLAYER_Y - DIAG_OFF_Y, BAR_SIDE),
+  ],
+  downRight: [
+    hBar(PLAYER_X + DIAG_OFF_X, EDGE_B, BAR_SIDE),
+    vBar(EDGE_R, PLAYER_Y + DIAG_OFF_Y, BAR_SIDE),
+  ],
+  downLeft: [
+    hBar(PLAYER_X - DIAG_OFF_X, EDGE_B, BAR_SIDE),
+    vBar(EDGE_L, PLAYER_Y + DIAG_OFF_Y, BAR_SIDE),
+  ],
+};
+
 /** Reused so the flare's glyph never allocates an options literal per frame. */
 const MARK_OPT: TextOptions = { size: 26, color: AMBER_DARK, alpha: 1 };
 /** Fixed wobble for the trail chips: a trail, not a straight hard streak. */
 const TRAIL_WOBBLE = [3.2, -3.6, 2.4, -1.8];
 
+/** Distance from the spawn point to the arena edge along its own ray. The
+ *  chip group is scaled to this, or the top flare draws itself off-screen. */
+function edgeRoom(sx: number, sy: number, vx: number, vy: number): number {
+  let room = Infinity;
+  if (vx > 0) room = Math.min(room, (GAME_WIDTH - sx) / vx);
+  else if (vx < 0) room = Math.min(room, sx / -vx);
+  if (vy > 0) room = Math.min(room, (GAME_HEIGHT - sy) / vy);
+  else if (vy < 0) room = Math.min(room, sy / -vy);
+  return room;
+}
+
 /**
- * Warning flare: a rounded capsule at the arena edge for peripheral vision, a
+ * Warning flare: rounded capsules at the arena edges for peripheral vision, a
  * warning bubble that swells at the exact point the enemy will appear, and a
  * ring around it that unwinds like a fuse.
  */
@@ -88,12 +171,15 @@ export function drawTelegraph(
   g: CanvasRenderingContext2D,
   e: Enemy,
   px: number,
-  py: number,
-  w: number,
-  h: number
+  py: number
 ): void {
+  // The caller dims a flare that is no longer the story (everything but the
+  // fatal side, once the run is over), so the three alphas that set themselves
+  // instead of multiplying have to fold that in by hand.
+  const base = g.globalAlpha;
   const lying = isUncommitted(e);
-  const info = DIR_INFO[lying ? e.flareDir : e.dir];
+  const shown = lying ? e.flareDir : e.dir;
+  const info = DIR_INFO[shown];
   const color = lying ? AMBER : ROSE_DEEP;
   const outline = lying ? AMBER_DARK : ROSE_DARK;
   // Urgency: brighter and faster as the strike nears. Squaring the phase makes
@@ -104,37 +190,28 @@ export function drawTelegraph(
 
   g.save();
 
-  // Edge capsule — visible even when the player is staring at the other side.
-  const horizontal = info.vx !== 0;
-  const bw = horizontal ? BAR_THICK : BAR_SPAN;
-  const bh = horizontal ? BAR_SPAN : BAR_THICK;
-  const bx = horizontal
-    ? info.vx < 0
-      ? BAR_INSET
-      : w - BAR_THICK - BAR_INSET
-    : px - BAR_SPAN / 2;
-  const by = horizontal
-    ? py - BAR_SPAN / 2
-    : info.vy < 0
-      ? BAR_INSET
-      : h - BAR_THICK - BAR_INSET;
+  // Edge capsules — visible even when the player is staring at another side.
+  const bars = EDGE_BARS[shown];
   const pad = 9;
   g.fillStyle = withAlpha(color, alpha * 0.2);
-  roundRect(g, bx - pad, by - pad, bw + pad * 2, bh + pad * 2, (BAR_THICK + pad * 2) / 2);
-  g.fill();
+  for (let i = 0; i < bars.length; i++) {
+    const b = bars[i];
+    roundRect(g, b.x - pad, b.y - pad, b.w + pad * 2, b.h + pad * 2, (BAR_THICK + pad * 2) / 2);
+    g.fill();
+  }
   g.fillStyle = withAlpha(color, Math.min(1, 0.35 + alpha * 0.65));
-  roundRect(g, bx, by, bw, bh, BAR_THICK / 2);
-  g.fill();
+  for (let i = 0; i < bars.length; i++) {
+    const b = bars[i];
+    roundRect(g, b.x, b.y, b.w, b.h, BAR_THICK / 2);
+    g.fill();
+  }
 
   const sx = px + info.vx * SPAWN_DIST;
   const sy = py + info.vy * SPAWN_DIST;
 
   // Rounded chips live OUTSIDE the spawn point and slide inward as the fuse
-  // burns. The horizontal sides have ~200px of margin to the arena edge; the
-  // vertical ones have 40-60px, so the group is scaled to the room that side
-  // actually has — otherwise the top flare draws half of itself off-screen.
-  const room = horizontal ? (info.vx < 0 ? sx : w - sx) : info.vy < 0 ? sy : h - sy;
-  const span = Math.max(30, Math.min(72, room - 4));
+  // burns, scaled to the room that side actually has to draw them in.
+  const span = Math.max(30, Math.min(72, edgeRoom(sx, sy, info.vx, info.vy) - 4));
   const step = span * 0.236;
   const slide = span * 0.361;
   const nose = span * 0.153;
@@ -166,8 +243,8 @@ export function drawTelegraph(
   // Warning bubble: swells toward the strike so "soon" is a size, not a hue.
   // Solid bubble = this side has committed. Hollow dashed bubble = it has not.
   const r = 15 + 13 * k;
-  dropShadow(g, sx, sy + r * 0.6, r * 0.85, r * 0.3, 0.1);
-  softHalo(g, sx, sy, r + 9, color, 0.16 + 0.14 * pulse);
+  dropShadow(g, sx, sy + r * 0.6, r * 0.85, r * 0.3, 0.1 * base);
+  softHalo(g, sx, sy, r + 9, color, (0.16 + 0.14 * pulse) * base);
   g.fillStyle = lying ? CARD : withAlpha(color, 0.94);
   g.beginPath();
   g.arc(sx, sy, r, 0, TAU);
@@ -195,7 +272,7 @@ export function drawTelegraph(
 
   MARK_OPT.color = lying ? AMBER_DARK : "#ffffff";
   MARK_OPT.size = r * 1.15;
-  MARK_OPT.alpha = lying ? 0.7 + 0.3 * pulse : 0.85;
+  MARK_OPT.alpha = (lying ? 0.7 + 0.3 * pulse : 0.85) * base;
   text(g, lying ? "?" : "!", sx, sy + 1, MARK_OPT);
 }
 

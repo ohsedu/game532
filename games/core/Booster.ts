@@ -19,8 +19,12 @@ export class Booster {
 
   /** Full tank empties in 1 / DRAIN seconds of continuous use. */
   private static readonly DRAIN = 0.55;
-  /** Empty tank refills in 1 / REFILL seconds. */
-  private static readonly REFILL = 0.2;
+  /**
+   * Passive trickle only — a tenth of what it used to be, so an empty tank now
+   * takes ~50s to fill on its own. Boost is meant to come from PICKUPS; the
+   * trickle exists so a player who has found none is not permanently grounded.
+   */
+  private static readonly REFILL = 0.02;
   /** Quiet period after releasing before fuel starts returning. */
   private static readonly REFILL_DELAY = 0.55;
   /**
@@ -76,6 +80,28 @@ export class Booster {
   /** True when the player could start a boost right now. */
   get ready(): boolean {
     return this.fuel >= Booster.MIN_TO_ENGAGE;
+  }
+
+  /**
+   * Adds fuel from a pickup.
+   *
+   * Also clears the post-release delay: collecting a can should feel like an
+   * immediate top-up, not a top-up the player then has to wait on.
+   *
+   * @param amount Fraction of a full tank, 0..1.
+   * @returns How much was actually taken, so the caller can score or skip the
+   *   pickup effect when the tank was already full.
+   */
+  refill(amount: number): number {
+    const before = this.fuel;
+    this.fuel = Math.min(1, this.fuel + amount);
+    this.sinceRelease = Booster.REFILL_DELAY;
+    return this.fuel - before;
+  }
+
+  /** True when a pickup would be wasted. */
+  get full(): boolean {
+    return this.fuel >= 0.999;
   }
 
   /**

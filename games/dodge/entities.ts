@@ -146,3 +146,40 @@ export interface SpiralEmitter {
 export function createSpiral(): SpiralEmitter {
   return { p: 0, angle: 0, spinDir: 1, fireCd: 0, phase: 0, firing: false };
 }
+
+/**
+ * A boost can waiting to be collected.
+ *
+ * Deliberately not a Bullet: it shares no field with one, so no loop can ever
+ * treat a can as a hazard by accident.
+ */
+export interface Pickup {
+  active: boolean;
+  x: number;
+  y: number;
+  /** Seconds of life left. Drives the fade-out, so it is never snapped away. */
+  life: number;
+  /** Counts up from spawn; drives the pop-in scale. */
+  age: number;
+  /** Random phase so two cans on screen never bob in lockstep. */
+  bob: number;
+}
+
+function blankPickup(): Pickup {
+  return { active: false, x: 0, y: 0, life: 0, age: 0, bob: 0 };
+}
+
+export function createPickupPool(capacity: number): Pickup[] {
+  return Array.from({ length: capacity }, blankPickup);
+}
+
+/**
+ * Can livery. Green and cyan only, and both are structurally unavailable to
+ * hazards: KIND_COLOR is entirely warm/violet and green is already the arena's
+ * one word for "safe" (the wall's gap lane). A can therefore cannot be misread
+ * as a threat even in peripheral vision on a full screen.
+ */
+export const CAN_BODY = "#4ecb71";
+export const CAN_OUTLINE = "#2c8b4c";
+export const CAN_TRIM = "#2fd6c4";
+export const CAN_TRIM_OUTLINE = "#158c81";

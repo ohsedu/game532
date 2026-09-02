@@ -8,7 +8,7 @@
  */
 
 import { roundRect } from "@/games/core/draw";
-import type { Cloud, Decal, GuyPose, Poop } from "./entities";
+import type { Cloud, Decal, GuyPose, Pickup, Poop } from "./entities";
 
 const TAU = Math.PI * 2;
 
@@ -359,6 +359,127 @@ export function drawGuy(g: CanvasRenderingContext2D, p: GuyPose): void {
     g.fill();
     g.globalAlpha = 1;
   }
+
+  g.restore();
+}
+
+// --- Boost cell -------------------------------------------------------------
+/**
+ * Deliberately the opposite of a turd on every axis a player reads at speed:
+ * mint green against dark brown, straight facets against soft lobes, a pale
+ * halo against a dark drop shadow. Nothing that kills in this game is green.
+ */
+export const CELL_BODY = "#4ecb71";
+export const CELL_LIGHT = "#b6f0c8";
+export const CELL_DARK = "#1f8a4d";
+export const CELL_GLOW = "rgba(78, 203, 113, 0.75)";
+/** Sparkle trail and collect burst. No brown, no orange — nothing hazard-coloured. */
+export const CELL_SPARKS = ["#4ecb71", "#b6f0c8", "#ffffff", "#3fb267"] as const;
+
+/** Flat-sided hexagon. The only straight edges in the sky. */
+function crystalPath(g: CanvasRenderingContext2D, r: number): void {
+  g.beginPath();
+  g.moveTo(0, -r * 1.16);
+  g.lineTo(r * 0.88, -r * 0.52);
+  g.lineTo(r * 0.88, r * 0.52);
+  g.lineTo(0, r * 1.16);
+  g.lineTo(-r * 0.88, r * 0.52);
+  g.lineTo(-r * 0.88, -r * 0.52);
+  g.closePath();
+}
+
+/** Four-point sparkle, drawn around the origin. */
+function twinkle(g: CanvasRenderingContext2D, x: number, y: number, s: number): void {
+  g.beginPath();
+  g.moveTo(x, y - s);
+  g.quadraticCurveTo(x, y, x + s, y);
+  g.quadraticCurveTo(x, y, x, y + s);
+  g.quadraticCurveTo(x, y, x - s, y);
+  g.quadraticCurveTo(x, y, x, y - s);
+  g.closePath();
+  g.fill();
+}
+
+/**
+ * The boost cell. `scale` carries the spawn pop and the dissolve shrink,
+ * `alpha` the dissolve fade.
+ *
+ * The glow is a canvas shadow rather than a radial gradient because a gradient
+ * is an allocation per frame, and this draws every frame it is on screen.
+ */
+export function drawPickup(
+  g: CanvasRenderingContext2D,
+  p: Pickup,
+  scale: number,
+  alpha: number
+): void {
+  const r = p.r;
+  const tilt = Math.sin(p.phase * 1.1) * 0.26;
+  const breathe = 1 + Math.sin(p.phase * 2.3) * 0.05;
+
+  g.save();
+  g.globalAlpha = alpha;
+  g.translate(p.x, p.y + Math.sin(p.phase * 1.6) * 2.5);
+
+  // Halo ring: sits outside the silhouette so the cell keeps a soft, friendly
+  // outline even when it passes in front of a cloud.
+  g.strokeStyle = CELL_BODY;
+  g.globalAlpha = alpha * (0.16 + Math.abs(Math.sin(p.phase * 1.9)) * 0.12);
+  g.lineWidth = 2;
+  g.beginPath();
+  g.arc(0, 0, r * 1.75 * scale, 0, TAU);
+  g.stroke();
+  g.globalAlpha = alpha;
+
+  g.rotate(tilt);
+  g.scale(scale * breathe, scale / breathe);
+  g.lineJoin = "round";
+
+  // Body, carrying a light-coloured glow. Turds carry a dark shadow instead,
+  // which is most of why the two never read alike in peripheral vision.
+  g.shadowColor = CELL_GLOW;
+  g.shadowBlur = 16;
+  crystalPath(g, r);
+  g.fillStyle = CELL_BODY;
+  g.fill();
+  g.shadowColor = "rgba(0,0,0,0)";
+  g.shadowBlur = 0;
+
+  g.strokeStyle = CELL_DARK;
+  g.lineWidth = 2.6;
+  g.stroke();
+
+  // Top-left facet, lit like every other surface in the scene.
+  g.globalAlpha = alpha * 0.75;
+  g.fillStyle = CELL_LIGHT;
+  g.beginPath();
+  g.moveTo(0, -r * 1.16);
+  g.lineTo(r * 0.88, -r * 0.52);
+  g.lineTo(0, -r * 0.12);
+  g.lineTo(-r * 0.88, -r * 0.52);
+  g.closePath();
+  g.fill();
+  g.globalAlpha = alpha;
+
+  // Bolt glyph: says "fuel", and matches nothing on the hazard.
+  g.fillStyle = "#ffffff";
+  g.beginPath();
+  g.moveTo(r * 0.2, -r * 0.66);
+  g.lineTo(-r * 0.36, r * 0.06);
+  g.lineTo(-r * 0.04, r * 0.06);
+  g.lineTo(-r * 0.2, r * 0.72);
+  g.lineTo(r * 0.36, -r * 0.08);
+  g.lineTo(r * 0.04, -r * 0.08);
+  g.closePath();
+  g.fill();
+
+  // Two twinkles, out of phase, so the cell glints instead of sitting still.
+  const t1 = 0.5 + Math.sin(p.phase * 3.1) * 0.5;
+  const t2 = 0.5 + Math.sin(p.phase * 2.4 + 2) * 0.5;
+  g.globalAlpha = alpha * (0.35 + t1 * 0.6);
+  twinkle(g, -r * 1.15, -r * 0.85, 3 + t1 * 3.5);
+  g.globalAlpha = alpha * (0.35 + t2 * 0.6);
+  twinkle(g, r * 1.05, r * 0.7, 2.5 + t2 * 3);
 
   g.restore();
 }

@@ -1,6 +1,6 @@
 import { BaseGame, type GameServices, type HudStat } from "@/games/core/BaseGame";
 import { Booster } from "@/games/core/Booster";
-import { circleHitForgiving, edgeGap, type Circle } from "@/games/core/Collision";
+import { circleHit, circleHitForgiving, edgeGap, type Circle } from "@/games/core/Collision";
 import {
   OPENING_GRACE,
   rampEaseOut,
@@ -14,20 +14,27 @@ import {
   blankDecal,
   blankLabel,
   blankMote,
+  blankPickup,
   blankPoop,
   blankPose,
   type Cloud,
   type Decal,
   type Label,
   type Mote,
+  type Pickup,
   type Poop,
 } from "./entities";
 import {
+  CELL_BODY,
+  CELL_DARK,
+  CELL_GLOW,
+  CELL_SPARKS,
   CONFETTI_COLORS,
   drawCloud,
   drawDecal,
   drawGuy,
   drawImpactShadow,
+  drawPickup,
   drawPoop,
   drawWarning,
   POOP_LIGHT,
@@ -105,6 +112,88 @@ const MOTE_COUNT = 34;
 const SCORE_PER_SEC = 10;
 const NEAR_MISS_SCORE = 15;
 
+// --- Boost cells ------------------------------------------------------------
+/**
+ * Two in flight at once is already more than the cadence below can produce; the
+ * pool exists so a burst is impossible rather than merely unlikely.
+ */
+const CELL_POOL = 4;
+const CELL_R = 14;
+/**
+ * Collection radius, added to the player's 17. 59px of centre-to-centre reach
+ * against a 28px-wide cell means "run under it" collects, and a clipped corner
+ * collects too. Being generous costs nothing here: a cell cannot kill, so the
+ * only thing a tight radius could add is the feeling of being robbed.
+ */
+const CELL_GRAB = 42;
+/**
+ * Half a tank. A full tank is ~1.8s of boost, so one cell buys ~0.9s — enough
+ * for a real escape, not enough to hold the button down.
+ */
+const CELL_FUEL = 0.5;
+/**
+ * The slowest turd falls at ~360px/s in the opening and ~430px/s late, the
+ * fastest at ~900px/s, so a cell is under half the speed of anything else in
+ * the sky and a fifth of the worst of it. That is what makes the chase a real
+ * decision rather than a reflex: it also buys the chase its time budget, 3.6s
+ * from entering the frame to dissolving on the floor.
+ */
+const CELL_FALL = 175;
+/**
+ * Cadence. Averaged, a cell every ~10.5s is ~5-6 per minute; a competent player
+ * takes most but not all of them, which lands at three or four boosts a minute
+ * on top of the passive trickle. Anything under ~7s and the gauge is simply
+ * never empty, which is the failure mode this whole feature is tuned against.
+ */
+const CELL_GAP_MIN = 8.5;
+const CELL_GAP_MAX = 12.5;
+/** Early enough that the first one lands before the sky gets busy. */
+const CELL_FIRST = 5;
+const CELL_SCORE = 60;
+/** Collected on a full tank: still worth taking, never worth diverting for. */
+const CELL_SCORE_FULL = 25;
+/**
+ * How far from the player a cell may be placed.
+ *
+ * From a standing start the charge ramp gives ~1100px in the 3.6s a cell is in
+ * the air, but that is a straight-line sprint on an empty screen. Halving it
+ * leaves the run affordable while still dodging, and keeps a cell from baiting
+ * a full-width crossing through late-game rain.
+ */
+const CELL_REACH = 560;
+/** Candidate columns sampled at spawn; the emptiest one wins. */
+const CELL_LANE_TRIES = 6;
+/** A column with this much daylight from every drop in flight is good enough. */
+const CELL_LANE_CLEAR = 80;
+/** Dissolve time once it reaches the floor. Still collectable while it fades. */
+const CELL_FADE = 0.45;
+/**
+ * Once a cell lands it waits to be claimed: CELL_REST seconds solid, then
+ * CELL_BLINK seconds of accelerating blink before it burns out.
+ *
+ * A blink rather than a fade — a fade reads as decoration until it is already
+ * gone, while a blink is the arcade signal for "decide now", which is the
+ * decision a cell on the floor is asking for. It also matters more here than in
+ * the other game: the player is pinned to the lower band, so a landed cell is
+ * always reachable and the only question is whether it is worth the detour.
+ */
+const CELL_REST = 3;
+const CELL_BLINK = 2;
+const CELL_BLINK_FROM = 5;
+const CELL_BLINK_TO = 14;
+const CELL_EXPIRE_Y = FLOOR_Y - 26;
+
+/** Booster gauge geometry, shared by the gauge itself and the pickup flash. */
+const GAUGE_Y = 200;
+const GAUGE_W = 11;
+const GAUGE_H = 300;
+/** Seconds the gauge stays lit after a top-up. */
+const GAUGE_FLASH = 0.6;
+
+const FUEL_WORD = "FUEL!";
+const FULL_WORD = "TANK FULL";
+const FUEL_TAG = "+FUEL";
+
 // --- Light-theme palette ----------------------------------------------------
 /** Ink for canvas text and outlines. */
 const INK = "#22252d";
@@ -162,6 +251,7 @@ export class PoopGame extends BaseGame {
   private comboLeft = 0;
 
   private poops: Poop[] = [];
+  private cells: Pickup[] = [];
   private decals: Decal[] = [];
   private labels: Label[] = [];
   private clouds: Cloud[] = [];
@@ -175,6 +265,9 @@ export class PoopGame extends BaseGame {
   private guardX = 0;
   private guardHalf = 0;
   private guardLeft = 0;
+  private nextCell = 0;
+  /** 1 right after a top-up, decaying to 0; drives the gauge flash. */
+  private gaugeFlash = 0;
   private warnSndCd = 0;
   private splatSndCd = 0;
   /** Seconds left on the "STORM INCOMING" banner; runs for the volley telegraph. */
@@ -198,6 +291,8 @@ export class PoopGame extends BaseGame {
   private holdDirX = 0;
   private holdDirY = 0;
   private readonly hc: Circle = { x: 0, y: 0, r: 1 };
+  /** Scratch circle for the (deliberately fat) pickup grab test. */
+  private readonly gc: Circle = { x: 0, y: 0, r: CELL_GRAB };
   private readonly po: ParticleOptions = { x: 0, y: 0 };
   private readonly tLabel: TextOptions = { size: 22, align: "center", baseline: "middle" };
   private readonly tCombo: TextOptions = {
@@ -208,6 +303,13 @@ export class PoopGame extends BaseGame {
     shadowBlur: 6,
   };
   private readonly tHint: TextOptions = { size: 15, align: "center", baseline: "middle" };
+  private readonly tGauge: TextOptions = {
+    size: 13,
+    align: "right",
+    baseline: "middle",
+    shadow: TEXT_HALO,
+    shadowBlur: 6,
+  };
   private readonly tStorm: TextOptions = {
     size: 30,
     align: "center",
@@ -238,12 +340,14 @@ export class PoopGame extends BaseGame {
     this.holdDirY = 0;
     if (this.poops.length === 0) {
       for (let i = 0; i < POOP_POOL; i++) this.poops.push(blankPoop());
+      for (let i = 0; i < CELL_POOL; i++) this.cells.push(blankPickup());
       for (let i = 0; i < DECAL_POOL; i++) this.decals.push(blankDecal());
       for (let i = 0; i < LABEL_POOL; i++) this.labels.push(blankLabel());
       for (let i = 0; i < CLOUD_COUNT; i++) this.clouds.push(blankCloud());
       for (let i = 0; i < MOTE_COUNT; i++) this.motes.push(blankMote());
     }
     for (const p of this.poops) p.active = false;
+    for (const c of this.cells) c.active = false;
     for (const d of this.decals) d.active = false;
     for (const l of this.labels) l.active = false;
     for (let i = 0; i < CLOUD_COUNT; i++) {
@@ -279,6 +383,8 @@ export class PoopGame extends BaseGame {
     this.spawnAcc = 0;
     // First volley lands a few seconds after volleys unlock.
     this.nextVolley = 3;
+    this.nextCell = CELL_FIRST;
+    this.gaugeFlash = 0;
     this.guardLeft = 0;
     this.guardX = 0;
     this.guardHalf = 0;
@@ -308,9 +414,14 @@ export class PoopGame extends BaseGame {
       }
     }
 
+    if (this.gaugeFlash > 0) this.gaugeFlash = Math.max(0, this.gaugeFlash - dt / GAUGE_FLASH);
+
     this.updateBackground(dt);
     this.updatePlayer(dt);
     this.updateSpawning(dt);
+    // Before the rain: a cell touched on the same frame a turd lands should
+    // still pay out. Losing the run is punishment enough.
+    this.updateCells(dt, true);
     this.updatePoops(dt, true);
     this.updateDecals(dt);
     this.updateLabels(dt);
@@ -324,6 +435,8 @@ export class PoopGame extends BaseGame {
     this.splatSndCd -= dt;
     this.updateBackground(dt);
     // Debris keeps flying and the sky finishes emptying itself onto the floor.
+    // Cells keep drifting too, but nothing spawns and nothing can be collected.
+    this.updateCells(dt, false);
     this.updatePoops(dt, false);
     this.updateDecals(dt);
     this.updateLabels(dt);
@@ -555,7 +668,15 @@ export class PoopGame extends BaseGame {
     const maxX = this.width - gapHalf - 10;
     const gapLo = Math.max(minX, this.px - reach);
     const gapHi = Math.min(maxX, this.px + reach);
-    const gap = gapLo <= gapHi ? randRange(gapLo, gapHi) : clamp(this.px, minX, maxX);
+    // A cell already in the air is the one case where a reward could point at a
+    // wall, so the hole is put in its column when that column is a legal hole.
+    const aligned = this.alignCell(gapLo, gapHi);
+    const gap =
+      aligned >= 0
+        ? aligned
+        : gapLo <= gapHi
+          ? randRange(gapLo, gapHi)
+          : clamp(this.px, minX, maxX);
 
     // Widest center-to-center spacing that still guarantees an overlap with the
     // player circle (mirrors the forgiveness the hit test grants him). The 0.85
@@ -739,6 +860,282 @@ export class PoopGame extends BaseGame {
       this.po.gravity = 0;
       this.po.rotation = randRange(0, Math.PI);
       this.po.spin = randRange(-14, 14);
+      this.po.additive = false;
+      this.fx.emit(this.po);
+    }
+  }
+
+  // --- Boost cells ----------------------------------------------------------
+
+  /**
+   * Cells fall, twinkle, dissolve on the floor, and are picked up by a fat
+   * circle test.
+   *
+   * No swept test, unlike the rain: at CELL_FALL a clamped 1/20s step moves a
+   * cell 9px against a 59px grab radius, so sampling cannot tunnel one.
+   */
+  private updateCells(dt: number, live: boolean): void {
+    if (live) this.spawnCells(dt);
+
+    for (let i = 0; i < this.cells.length; i++) {
+      const c = this.cells[i];
+      if (!c.active) continue;
+
+      c.phase += dt * 2.4;
+      c.age += dt;
+
+      if (c.fade >= 0) {
+        c.fade -= dt;
+        if (c.fade <= 0) {
+          c.active = false;
+          continue;
+        }
+      } else if (c.grounded >= 0) {
+        c.grounded += dt;
+        if (c.grounded >= CELL_REST + CELL_BLINK) c.fade = CELL_FADE;
+      } else {
+        c.y += c.vy * dt;
+        if (c.y >= CELL_EXPIRE_Y) {
+          // Spent, not splattered: it settles and waits to be claimed.
+          c.y = CELL_EXPIRE_Y;
+          c.grounded = 0;
+          this.cellSparks(c.x, c.y, 6, 60);
+        }
+        // Sparkle trail. Turds fall bare, so a trail alone identifies a cell
+        // even at the edge of vision.
+        c.trail += dt * 13;
+        while (c.trail >= 1) {
+          c.trail -= 1;
+          this.po.x = c.x + randRange(-CELL_R * 0.8, CELL_R * 0.8);
+          this.po.y = c.y + randRange(-CELL_R * 0.5, CELL_R * 0.5);
+          this.po.vx = randRange(-14, 14);
+          this.po.vy = randRange(-34, -8);
+          this.po.life = randRange(0.25, 0.5);
+          this.po.size = randRange(1.2, 2.6);
+          this.po.sizeEnd = 0;
+          this.po.color = pick(CELL_SPARKS);
+          this.po.shape = "circle";
+          this.po.drag = 0.4;
+          this.po.gravity = 0;
+          this.po.rotation = 0;
+          this.po.spin = 0;
+          this.po.additive = false;
+          this.fx.emit(this.po);
+        }
+      }
+
+      if (!live) continue;
+      this.gc.x = c.x;
+      this.gc.y = c.y;
+      if (circleHit(this.pc, this.gc)) this.collect(c);
+    }
+  }
+
+  /**
+   * Reconciles a cell already in flight with a wall about to spawn.
+   *
+   * Returns the column the volley should open its hole in, or -1. Putting the
+   * hole where the cell already is makes the greedy line and the safe line the
+   * same line — and the corridor guard then keeps rain out of it. A cell the
+   * hole cannot legally cover burns out early instead: losing a pickup is a
+   * shrug, being lured into a wall by one is not.
+   */
+  private alignCell(gapLo: number, gapHi: number): number {
+    let aligned = -1;
+    for (let i = 0; i < this.cells.length; i++) {
+      const c = this.cells[i];
+      if (!c.active || c.fade >= 0) continue;
+      if (aligned < 0 && c.x >= gapLo && c.x <= gapHi) {
+        aligned = c.x;
+        continue;
+      }
+      c.fade = CELL_FADE;
+      this.cellSparks(c.x, c.y, 5, 60);
+    }
+    return aligned;
+  }
+
+  private spawnCells(dt: number): void {
+    this.nextCell -= dt;
+    if (this.nextCell > 0) return;
+
+    // Never while a wall is on its way down. The only safe column then is the
+    // volley corridor, so a cell placed anywhere else is an invitation to stand
+    // in the wall. Parking the timer at zero drops it the instant the sky
+    // clears rather than restarting the wait.
+    if (this.guardLeft > 0 || this.stormT > 0) {
+      this.nextCell = 0;
+      return;
+    }
+
+    const c = this.acquireCell();
+    if (!c) {
+      this.nextCell = 1;
+      return;
+    }
+    c.active = true;
+    c.x = this.chooseLane();
+    c.y = -CELL_R * 1.6;
+    c.vy = CELL_FALL;
+    c.r = CELL_R;
+    c.phase = randRange(0, Math.PI * 2);
+    c.age = 0;
+    c.fade = -1;
+    c.grounded = -1;
+    c.trail = 0;
+    this.nextCell = randRange(CELL_GAP_MIN, CELL_GAP_MAX);
+
+    // A tiny high twinkle. A turd enters on "warn", a low square thud; this is
+    // two octaves above it and quiet, so it pulls the eye up without ever being
+    // mistaken for a hazard cue.
+    this.audio.play("score", 1.9, 0.16);
+  }
+
+  private acquireCell(): Pickup | null {
+    for (let i = 0; i < this.cells.length; i++) {
+      if (!this.cells[i].active) return this.cells[i];
+    }
+    return null;
+  }
+
+  /**
+   * Pick the emptiest of a few candidate columns within reach of the player.
+   *
+   * A cell cannot be dodged, so placement is where its fairness is decided: the
+   * further its column sits from everything already in flight, the less the
+   * detour costs, and the less a reward can read as bait.
+   */
+  private chooseLane(): number {
+    const lo = Math.max(EDGE + CELL_R, this.px - CELL_REACH);
+    const hi = Math.min(this.width - EDGE - CELL_R, this.px + CELL_REACH);
+    let bestX = clamp(this.px, lo, hi);
+    let best = -Infinity;
+    for (let i = 0; i < CELL_LANE_TRIES; i++) {
+      const x = randRange(lo, hi);
+      let clear = Infinity;
+      for (let j = 0; j < this.poops.length; j++) {
+        const p = this.poops[j];
+        if (!p.active) continue;
+        const d = Math.abs(p.x - x) - p.r;
+        if (d < clear) clear = d;
+      }
+      if (clear > best) {
+        best = clear;
+        bestX = x;
+      }
+      if (clear >= CELL_LANE_CLEAR) break;
+    }
+    return bestX;
+  }
+
+  /**
+   * Two outcomes, deliberately unalike. A top-up is loud and points at the
+   * gauge; a cell taken on a full tank is a small polite pop worth a few
+   * points. `refill` reports what it actually took, so the fuel feedback never
+   * fires for fuel that was not added.
+   */
+  private collect(c: Pickup): void {
+    const x = c.x;
+    const y = c.y;
+    const got = this.booster.refill(CELL_FUEL);
+    c.active = false;
+
+    if (got <= 0) {
+      this.rawScore += CELL_SCORE_FULL;
+      this.audio.play("click", 1.7, 0.4);
+      this.cellSparks(x, y, 7, 110);
+      this.cellRing(x, y, 0.26, 9);
+      this.spawnLabel(x, y - 34, FULL_WORD, 0);
+      return;
+    }
+
+    this.rawScore += CELL_SCORE;
+    this.gaugeFlash = 1;
+    // Two notes: the chime lands on the cell, the second one on the gauge.
+    this.audio.play("success", 1.15, 0.5);
+    this.audio.play("score", 1.4, 0.32);
+    this.shake.add(2.5, 0.16);
+    this.cellSparks(x, y, 18, 200);
+    this.cellRing(x, y, 0.34, 15);
+    this.spawnLabel(x, y - 34, FUEL_WORD, 0);
+    this.fuelStream(x, y);
+  }
+
+  private cellSparks(x: number, y: number, n: number, speed: number): void {
+    for (let i = 0; i < n; i++) {
+      const a = (i / n) * Math.PI * 2 + randRange(-0.35, 0.35);
+      const s = speed * randRange(0.5, 1.3);
+      this.po.x = x;
+      this.po.y = y;
+      this.po.vx = Math.cos(a) * s;
+      this.po.vy = Math.sin(a) * s - 40;
+      this.po.life = randRange(0.28, 0.6);
+      this.po.size = randRange(2, 4.2);
+      this.po.sizeEnd = 0;
+      this.po.color = pick(CELL_SPARKS);
+      this.po.shape = i % 3 === 0 ? "square" : "circle";
+      this.po.drag = 0.3;
+      this.po.gravity = 260;
+      this.po.rotation = a;
+      this.po.spin = randRange(-12, 12);
+      this.po.additive = false;
+      this.fx.emit(this.po);
+    }
+  }
+
+  /**
+   * Expanding ring on collect. A ring particle grows to roughly four times
+   * `size`, so 15 draws one that lands on the ~59px grab radius: the pop is
+   * also an honest picture of how forgiving the pickup actually is.
+   */
+  private cellRing(x: number, y: number, life: number, size: number): void {
+    this.po.x = x;
+    this.po.y = y;
+    this.po.vx = 0;
+    this.po.vy = 0;
+    this.po.life = life;
+    this.po.size = size;
+    this.po.sizeEnd = size;
+    this.po.color = CELL_BODY;
+    this.po.shape = "ring";
+    this.po.drag = 1;
+    this.po.gravity = 0;
+    this.po.rotation = 0;
+    this.po.spin = 0;
+    this.po.additive = false;
+    this.fx.emit(this.po);
+  }
+
+  /**
+   * A streak of sparks fired from the cell into the fuel gauge.
+   *
+   * The gauge lives against the right edge, usually far from wherever the cell
+   * was caught; without something crossing that gap the cause and the effect
+   * are two unrelated things that happen to share a frame. Speed is solved from
+   * the distance so the sparks arrive as the bar jumps rather than after it.
+   */
+  private fuelStream(x: number, y: number): void {
+    const tx = this.width - 30 + GAUGE_W / 2;
+    const ty = GAUGE_Y + GAUGE_H - GAUGE_H * this.booster.fuel;
+    const a = Math.atan2(ty - y, tx - x);
+    const d = Math.hypot(tx - x, ty - y);
+    for (let i = 0; i < 6; i++) {
+      const life = randRange(0.26, 0.4);
+      const s = (d / life) * randRange(0.85, 1);
+      const spread = randRange(-0.08, 0.08);
+      this.po.x = x + randRange(-8, 8);
+      this.po.y = y + randRange(-8, 8);
+      this.po.vx = Math.cos(a + spread) * s;
+      this.po.vy = Math.sin(a + spread) * s;
+      this.po.life = life;
+      this.po.size = randRange(1.6, 2.8);
+      this.po.sizeEnd = 0;
+      this.po.color = i % 2 === 0 ? CELL_BODY : ACCENT;
+      this.po.shape = "spark";
+      this.po.drag = 1;
+      this.po.gravity = 0;
+      this.po.rotation = a;
+      this.po.spin = 0;
       this.po.additive = false;
       this.fx.emit(this.po);
     }
@@ -1038,6 +1435,25 @@ export class PoopGame extends BaseGame {
       drawImpactShadow(g, p.x, FLOOR_Y + 8, p.r, clamp(p.y / FLOOR_Y, 0, 1));
     }
 
+    // Cells go under both the telegraphs and the rain: a reward may never
+    // cover a hazard or the marker that announces one, however bright it is.
+    for (let i = 0; i < this.cells.length; i++) {
+      const c = this.cells[i];
+      if (!c.active) continue;
+      // Solid while it falls and rests, then an accelerating blink so the last
+      // seconds read as "decide now" rather than as decoration fading out.
+      let alpha = c.fade >= 0 ? c.fade / CELL_FADE : 1;
+      if (c.fade < 0 && c.grounded > CELL_REST) {
+        const t = Math.min(1, (c.grounded - CELL_REST) / CELL_BLINK);
+        const hz = CELL_BLINK_FROM + (CELL_BLINK_TO - CELL_BLINK_FROM) * t;
+        alpha *= Math.sin((c.grounded - CELL_REST) * hz * Math.PI) > 0 ? 1 : 0.18;
+      }
+      // Overshooting pop on the way in, shrink on the way out.
+      const grow = Math.min(1, c.age * 5);
+      const scale = grow * (1 + Math.sin(grow * Math.PI) * 0.22) * (0.6 + alpha * 0.4);
+      drawPickup(g, c, scale, alpha);
+    }
+
     const pulse = Math.abs(Math.sin(this.elapsed * 14));
     for (let i = 0; i < this.poops.length; i++) {
       const p = this.poops[i];
@@ -1186,11 +1602,64 @@ export class PoopGame extends BaseGame {
     g.restore();
   }
 
+  /**
+   * The booster gauge, plus the top-up flash.
+   *
+   * The fuel bar jumping by half its height is the actual feedback; everything
+   * here exists to make sure the player is looking at it when it happens. The
+   * bar is squeezed 40% wider for a beat (the gauge is deliberately slim, so
+   * width is the only axis free to shout on), a mint halo lights it in the
+   * pickup's own colour, and a ring expands off the new fuel line.
+   */
+  private drawGauge(g: CanvasRenderingContext2D): void {
+    const x = this.width - 30;
+    const cx = x + GAUGE_W / 2;
+    const f = this.gaugeFlash;
+
+    if (f > 0) {
+      const fillY = GAUGE_Y + GAUGE_H - GAUGE_H * this.booster.fuel;
+      g.save();
+      g.globalAlpha = f * f * 0.5;
+      g.fillStyle = CELL_BODY;
+      g.shadowColor = CELL_GLOW;
+      g.shadowBlur = 18;
+      roundRect(g, x - 5, GAUGE_Y - 5, GAUGE_W + 10, GAUGE_H + 10, (GAUGE_W + 10) / 2);
+      g.fill();
+      g.restore();
+
+      g.save();
+      g.globalAlpha = f * 0.85;
+      g.strokeStyle = CELL_BODY;
+      g.lineWidth = 2.5;
+      g.beginPath();
+      g.arc(cx, fillY, 7 + (1 - f) * 26, 0, Math.PI * 2);
+      g.stroke();
+      g.restore();
+
+      this.tGauge.alpha = Math.min(1, f * 1.4);
+      this.tGauge.color = CELL_DARK;
+      text(g, FUEL_TAG, x - 9, fillY - (1 - f) * 16, this.tGauge);
+    }
+
+    // Squeeze on the x axis only: the fill height is the number, and stretching
+    // that would misreport the tank for as long as the flash lasts.
+    if (f > 0.01) {
+      g.save();
+      g.translate(cx, 0);
+      g.scale(1 + f * 0.4, 1);
+      g.translate(-cx, 0);
+      this.booster.render(g, x, GAUGE_Y, GAUGE_W, GAUGE_H, ACCENT, INK);
+      g.restore();
+    } else {
+      this.booster.render(g, x, GAUGE_Y, GAUGE_W, GAUGE_H, ACCENT, INK);
+    }
+  }
+
   protected onRenderOverlay(g: CanvasRenderingContext2D): void {
     if (this.status !== "playing") return;
 
     // Outside the shake transform, so the gauge never jitters.
-    this.booster.render(g, this.width - 30, 200, 11, 300, ACCENT, INK);
+    this.drawGauge(g);
 
     if (this.elapsed < 3.2) {
       this.tHint.alpha = clamp(3.2 - this.elapsed, 0, 1) * 0.9;
