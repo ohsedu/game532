@@ -4,7 +4,7 @@ import { GAME_LIST } from "@/games/registry";
 
 export default function HomePage() {
   return (
-    <main className="mx-auto flex w-full max-w-5xl flex-1 flex-col px-6 py-14 sm:py-20">
+    <main className="mx-auto flex w-full max-w-5xl flex-1 flex-col px-6 pt-8 pb-14 sm:pt-10 sm:pb-20">
       <header className="animate-rise text-center">
         <span className="pill inline-block bg-primary-soft px-4 py-1.5 text-xs text-primary">
           방향키만으로 즐기는 미니게임
@@ -17,13 +17,13 @@ export default function HomePage() {
         </p>
       </header>
 
-      <section className="mt-12 grid gap-6 sm:grid-cols-2 lg:grid-cols-3">
+      <section className="mt-10 grid gap-6 sm:grid-cols-2 lg:grid-cols-3">
         {GAME_LIST.map((meta, i) => (
           <GameCard key={meta.id} meta={meta} index={i} />
         ))}
       </section>
 
-      <footer className="animate-rise mt-14 flex flex-col items-center gap-5">
+      <footer className="animate-rise mt-12 flex flex-col items-center gap-5">
         <Link
           href="/ranking"
           className="pill bg-primary px-8 py-3.5 text-sm text-white shadow-lg shadow-primary/25 transition-transform hover:scale-105 active:scale-95"

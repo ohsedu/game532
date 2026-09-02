@@ -21,7 +21,7 @@ export interface GameServices {
    */
   onScore: (score: number) => void;
   /** Fired exactly once per run, after the death animation is allowed to start. */
-  onGameOver: (finalScore: number) => void;
+  onGameOver: (finalScore: number, elapsedSeconds: number) => void;
   /** Optional: fired when a game's HUD extras change (combo, lives, ...). */
   onStats?: (stats: HudStat[]) => void;
 }
@@ -144,7 +144,10 @@ export abstract class BaseGame {
     this.status = "gameover";
     this.deathTime = 0;
     this.publish();
-    this.services.onGameOver(this.score);
+    // Reports the games own elapsed clock, not wall time: elapsed only
+    // advances while playing, so pausing can never inflate the run length that
+    // the server checks the score against.
+    this.services.onGameOver(this.score, this.elapsed);
   }
 
   private publish(): void {

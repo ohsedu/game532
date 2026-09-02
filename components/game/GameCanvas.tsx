@@ -17,7 +17,7 @@ export interface GameCanvasProps {
   paused?: boolean;
   onScore: (score: number) => void;
   onStats: (stats: HudStat[]) => void;
-  onGameOver: (finalScore: number) => void;
+  onGameOver: (finalScore: number, elapsedSeconds: number) => void;
   audioRef?: (audio: AudioManager) => void;
 }
 
@@ -108,7 +108,7 @@ export default function GameCanvas({
       audio,
       onScore: (s) => onScoreRef.current(s),
       onStats: (s) => onStatsRef.current(s),
-      onGameOver: (s) => onGameOverRef.current(s),
+      onGameOver: (s, elapsed) => onGameOverRef.current(s, elapsed),
     });
     gameRef.current = game;
 

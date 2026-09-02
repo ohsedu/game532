@@ -12,6 +12,8 @@ import GameCanvas from "./GameCanvas";
 import GameHUD from "./GameHUD";
 import GameOver from "./GameOver";
 import GamePause from "./GamePause";
+import RotateGate from "./RotateGate";
+import { PORTRAIT_PHONE, useMediaQuery } from "@/lib/useMediaQuery";
 
 type Phase = "ready" | "playing" | "over";
 
@@ -26,7 +28,7 @@ const EMPTY_STATS: HudStat[] = [];
  * screen visible at any window size. 11rem covers the nav, the hint line (two
  * lines on mobile) and the vertical padding.
  */
-const BOARD_WIDTH = "min(100%, calc((100dvh - 11rem) * 10 / 7))";
+const BOARD_WIDTH = "min(100%, calc((100dvh - var(--board-reserve)) * 10 / 7))";
 
 export default function GameShell({ meta }: { meta: GameMeta }) {
   const [phase, setPhase] = useState<Phase>("ready");
@@ -42,9 +44,11 @@ export default function GameShell({ meta }: { meta: GameMeta }) {
   // copied into state. commitBest notifies this subscription.
   const best = useLocalBest(meta.id);
 
+  // A phone held upright cannot show the board at a playable size, so the run
+  // freezes behind the rotate prompt instead of the player dying blind.
+  const portrait = useMediaQuery(PORTRAIT_PHONE);
+
   const audioRef = useRef<AudioManager | null>(null);
-  const startedAtRef = useRef(0);
-  const pausedAtRef = useRef(0);
   const overTimerRef = useRef(0);
   // True from the moment the player dies, before the panel appears. Stops ESC
   // from pausing during the death animation.
@@ -55,7 +59,6 @@ export default function GameShell({ meta }: { meta: GameMeta }) {
     audioRef.current?.play("click");
     if (overTimerRef.current) window.clearTimeout(overTimerRef.current);
     endingRef.current = false;
-    startedAtRef.current = performance.now();
     setScore(0);
     setStats(EMPTY_STATS);
     setIsNewRecord(false);
@@ -67,18 +70,11 @@ export default function GameShell({ meta }: { meta: GameMeta }) {
 
   const resume = useCallback(() => {
     audioRef.current?.play("click");
-    // Paused time must not count toward the run, or the score-vs-duration check
-    // on the server would see an implausibly long, low-scoring run.
-    if (pausedAtRef.current) {
-      startedAtRef.current += performance.now() - pausedAtRef.current;
-      pausedAtRef.current = 0;
-    }
     setPaused(false);
   }, []);
 
   const pause = useCallback(() => {
     audioRef.current?.play("click");
-    pausedAtRef.current = performance.now();
     setPaused(true);
   }, []);
 
@@ -114,8 +110,7 @@ export default function GameShell({ meta }: { meta: GameMeta }) {
   useEffect(() => {
     if (phase !== "playing") return;
     const onBlur = () => {
-      if (endingRef.current || pausedAtRef.current) return;
-      pausedAtRef.current = performance.now();
+      if (endingRef.current) return;
       setPaused(true);
     };
     window.addEventListener("blur", onBlur);
@@ -129,9 +124,9 @@ export default function GameShell({ meta }: { meta: GameMeta }) {
   }, []);
 
   const handleGameOver = useCallback(
-    (finalScore: number) => {
+    (finalScore: number, elapsedSeconds: number) => {
       endingRef.current = true;
-      setDurationMs(performance.now() - startedAtRef.current);
+      setDurationMs(elapsedSeconds * 1000);
       setIsNewRecord(commitBest(meta.id, finalScore));
       setScore(finalScore);
       // Let the death animation read before the panel covers it.
@@ -153,9 +148,9 @@ export default function GameShell({ meta }: { meta: GameMeta }) {
   }, []);
 
   return (
-    <main className="mx-auto flex w-full max-w-[1000px] flex-1 flex-col justify-center px-4 py-6 sm:px-6">
+    <main className="landscape-flush mx-auto flex w-full max-w-[1000px] flex-1 flex-col justify-center px-4 py-6 sm:px-6">
       <nav
-        className="mx-auto mb-4 flex w-full items-center justify-between gap-3"
+        className="landscape-hide mx-auto mb-4 flex w-full items-center justify-between gap-3"
         style={{ maxWidth: BOARD_WIDTH }}
       >
         <Link
@@ -223,7 +218,7 @@ export default function GameShell({ meta }: { meta: GameMeta }) {
               gameId={meta.id}
               runId={runId}
               touch={meta.touch}
-              paused={paused}
+              paused={paused || portrait}
               onScore={setScore}
               onStats={setStats}
               onGameOver={handleGameOver}
@@ -235,7 +230,7 @@ export default function GameShell({ meta }: { meta: GameMeta }) {
               stats={stats}
               accent={meta.accent}
               muted={muted}
-              paused={paused}
+              paused={paused || portrait}
               onToggleMute={toggleMute}
               onTogglePause={paused ? resume : pause}
             />
@@ -261,10 +256,12 @@ export default function GameShell({ meta }: { meta: GameMeta }) {
             ) : null}
           </>
         )}
+
+        <RotateGate accent={meta.accent} />
       </div>
 
       <p
-        className="mx-auto mt-4 w-full text-center text-xs leading-relaxed text-ink-faint"
+        className="landscape-hide mx-auto mt-4 w-full text-center text-xs leading-relaxed text-ink-faint"
         style={{ maxWidth: BOARD_WIDTH }}
       >
         <span className="hidden sm:inline">

@@ -207,3 +207,73 @@ a {
   outline-offset: 3px;
   border-radius: 9999px;
 }
+
+/* --- Board sizing / device orientation -------------------------------------
+   The board is a fixed 1000x700 rectangle. `--board-reserve` is the vertical
+   room the surrounding chrome needs; the board width is derived from whatever
+   height is left, so the whole screen always fits without scrolling. */
+:root {
+  --board-reserve: 11rem;
+}
+
+/* Phone in landscape: the viewport is only ~390-430px tall, so the desktop
+   chrome allowance would leave the board around 300px wide. Strip the nav and
+   the hint line and hand the board the entire screen. */
+@media (orientation: landscape) and (max-height: 560px) and (pointer: coarse) {
+  :root {
+    --board-reserve: 0.75rem;
+  }
+  .landscape-hide {
+    display: none !important;
+  }
+  .landscape-flush {
+    padding: 0.25rem !important;
+  }
+}
+
+/* Phone in portrait: the board is unplayable at this aspect, so the rotate
+   prompt takes over and the board is hidden behind it. */
+.rotate-gate {
+  display: none;
+}
+
+@media (orientation: portrait) and (max-width: 767px) and (pointer: coarse) {
+  .rotate-gate {
+    display: flex;
+  }
+}
+
+/* The fullscreen + orientation-lock button is only meaningful where both APIs
+   exist; iOS Safari has neither. */
+.fullscreen-only {
+  display: none;
+}
+
+@supports (selector(:fullscreen)) {
+  .fullscreen-only {
+    display: inline-block;
+  }
+}
+
+@keyframes rotate-hint {
+  0%,
+  55%,
+  100% {
+    transform: rotate(0deg);
+  }
+  75%,
+  90% {
+    transform: rotate(-90deg);
+  }
+}
+
+.animate-rotate-hint {
+  animation: rotate-hint 2.6s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-rotate-hint {
+    animation: none;
+    transform: rotate(-90deg);
+  }
+}
