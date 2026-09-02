@@ -148,7 +148,7 @@ export default function GameShell({ meta }: { meta: GameMeta }) {
   const bindInput = useCallback((next: InputManager) => setInput(next), []);
 
   const padsDisabled = paused || portrait || phase === "over";
-  const surfaceRef = useRef<HTMLDivElement | null>(null);
+  const touchActive = phase === "playing" && !paused && !portrait;
 
   const bindAudio = useCallback((audio: AudioManager) => {
     audioRef.current = audio;
@@ -156,7 +156,12 @@ export default function GameShell({ meta }: { meta: GameMeta }) {
   }, []);
 
   return (
-    <main className="landscape-flush mx-auto flex w-full max-w-[1000px] flex-1 flex-col justify-center px-4 py-6 sm:px-6">
+    <main
+      className={
+        "landscape-flush mx-auto flex w-full max-w-[1000px] flex-1 flex-col justify-center px-4 py-6 sm:px-6" +
+        (touchActive ? " touch-none" : "")
+      }
+    >
       <nav
         className="landscape-hide mx-auto mb-4 flex w-full items-center justify-between gap-3"
         style={{ maxWidth: BOARD_WIDTH }}
@@ -178,7 +183,7 @@ export default function GameShell({ meta }: { meta: GameMeta }) {
         </Link>
       </nav>
 
-      <div ref={surfaceRef} className="relative mx-auto w-full">
+      <div className="relative mx-auto w-full">
         {phase !== "ready" ? (
           <div className="hud-slot">
             <div className="mx-auto w-full" style={{ maxWidth: BOARD_WIDTH }}>
@@ -283,7 +288,6 @@ export default function GameShell({ meta }: { meta: GameMeta }) {
             accent={meta.accent}
             input={input}
             disabled={padsDisabled}
-            surfaceRef={surfaceRef}
           />
         ) : null}
       </div>

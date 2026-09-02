@@ -10,8 +10,6 @@ interface TouchLayerProps {
   /** Null until the canvas has mounted and handed its input manager over. */
   input: InputManager | null;
   disabled: boolean;
-  /** The area a drag may start in — the whole game screen, board included. */
-  surfaceRef: RefObject<HTMLElement | null>;
 }
 
 /** Drag distance, in CSS px, before an axis engages. */
@@ -42,7 +40,6 @@ export default function TouchLayer({
   accent,
   input,
   disabled,
-  surfaceRef,
 }: TouchLayerProps) {
   const leftKnob = useRef<HTMLDivElement | null>(null);
   const activeKnob = useRef<HTMLDivElement | null>(null);
@@ -80,8 +77,7 @@ export default function TouchLayer({
   }, [disabled, release]);
 
   useEffect(() => {
-    const surface = surfaceRef.current;
-    if (!surface || mode !== "joystick") return;
+    if (mode !== "joystick") return;
 
     const down = (e: PointerEvent) => {
       if (disabledRef.current || e.pointerType === "mouse") return;
@@ -91,7 +87,6 @@ export default function TouchLayer({
       pointerId.current = e.pointerId;
       origin.current = { x: e.clientX, y: e.clientY };
       activeKnob.current = leftKnob.current;
-      surface.setPointerCapture(e.pointerId);
     };
 
     const move = (e: PointerEvent) => {
@@ -115,21 +110,22 @@ export default function TouchLayer({
 
     const end = (e: PointerEvent) => {
       if (pointerId.current !== e.pointerId) return;
-      if (surface.hasPointerCapture(e.pointerId)) surface.releasePointerCapture(e.pointerId);
       release();
     };
 
-    surface.addEventListener("pointerdown", down);
-    surface.addEventListener("pointermove", move);
-    surface.addEventListener("pointerup", end);
-    surface.addEventListener("pointercancel", end);
+    // passive: false so preventDefault actually suppresses the scroll gesture.
+    const opts = { passive: false } as const;
+    window.addEventListener("pointerdown", down, opts);
+    window.addEventListener("pointermove", move, opts);
+    window.addEventListener("pointerup", end);
+    window.addEventListener("pointercancel", end);
     return () => {
-      surface.removeEventListener("pointerdown", down);
-      surface.removeEventListener("pointermove", move);
-      surface.removeEventListener("pointerup", end);
-      surface.removeEventListener("pointercancel", end);
+      window.removeEventListener("pointerdown", down);
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", end);
+      window.removeEventListener("pointercancel", end);
     };
-  }, [mode, surfaceRef, setKnob, release]);
+  }, [mode, setKnob, release]);
 
   return (
     <div className="touch-only pointer-events-none fixed inset-0 z-30 items-center">
