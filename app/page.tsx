@@ -1,8 +1,18 @@
 import Link from "next/link";
 import GameCard from "@/components/home/GameCard";
 import { GAME_LIST } from "@/games/registry";
+import { getTopScores } from "@/lib/topScores";
 
-export default function HomePage() {
+/**
+ * Leaderboard numbers are rebuilt at most twice a minute: fresh enough that a
+ * new record shows up while it still feels like news, cheap enough that a burst
+ * of visitors does not become a burst of queries.
+ */
+export const revalidate = 30;
+
+export default async function HomePage() {
+  const top = await getTopScores();
+
   return (
     <main className="mx-auto flex w-full max-w-6xl flex-1 flex-col px-6 pt-8 pb-16 sm:pt-12 sm:pb-24">
       <header className="animate-rise text-center">
@@ -19,7 +29,7 @@ export default function HomePage() {
 
       <section className="mt-5 grid gap-7 sm:grid-cols-2 lg:grid-cols-3">
         {GAME_LIST.map((meta, i) => (
-          <GameCard key={meta.id} meta={meta} index={i} />
+          <GameCard key={meta.id} meta={meta} index={i} top={top[meta.id] ?? null} />
         ))}
       </section>
 

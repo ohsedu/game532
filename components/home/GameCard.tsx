@@ -3,6 +3,7 @@
 import Link from "next/link";
 import type { GameMeta } from "@/types/game";
 import { useLocalBest } from "@/lib/useLocalBest";
+import type { TopScore } from "@/lib/topScores";
 import { formatScore } from "@/lib/format";
 
 /** Rounded, friendly glyph so each card reads differently at a glance. */
@@ -130,8 +131,20 @@ function CardArt({ id, accent }: { id: GameMeta["id"]; accent: string }) {
   );
 }
 
-export default function GameCard({ meta, index }: { meta: GameMeta; index: number }) {
-  const best = useLocalBest(meta.id);
+export default function GameCard({
+  meta,
+  index,
+  top,
+}: {
+  meta: GameMeta;
+  index: number;
+  /** Best score anyone has posted, from the server. Null when none exists. */
+  top: TopScore | null;
+}) {
+  // The personal best lives in localStorage, so clearing site data wipes it.
+  // The server number is the one that survives, which is why it leads here and
+  // the local one is only shown as a personal aside.
+  const mine = useLocalBest(meta.id);
 
   return (
     <Link
@@ -168,11 +181,18 @@ export default function GameCard({ meta, index }: { meta: GameMeta; index: numbe
         <p className="mt-2.5 text-xs leading-relaxed text-ink-faint">{meta.controls}</p>
 
         <div className="mt-auto flex items-end justify-between pt-6">
-          <div>
-            <p className="text-[10px] text-ink-faint">최고점수</p>
-            <p className="num mt-0.5 text-2xl font-semibold text-ink">
-              {best > 0 ? formatScore(best) : "—"}
+          <div className="min-w-0">
+            <p className="text-[10px] text-ink-faint">
+              {top ? "1위 · " + top.nickname : "최고점수"}
             </p>
+            <p className="num mt-0.5 truncate text-2xl font-semibold text-ink">
+              {top ? formatScore(top.score) : "—"}
+            </p>
+            {mine > 0 ? (
+              <p className="num mt-1 text-[11px] text-ink-faint">
+                내 기록 {formatScore(mine)}
+              </p>
+            ) : null}
           </div>
           <span
             className="pill px-7 py-3 text-base text-white transition-transform group-hover:scale-105"
