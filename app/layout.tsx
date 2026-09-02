@@ -26,7 +26,7 @@ const fredoka = Fredoka({
 });
 
 export const metadata: Metadata = {
-  title: "game532 — 키보드 미니게임 3종",
+  title: "게임532",
   description:
     "방향키만으로 즐기는 아케이드 미니게임 3종. 총알 피하기, 똥 피하기, 방향 사수. 점수를 기록하고 랭킹에 도전하세요.",
 };
