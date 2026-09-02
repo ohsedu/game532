@@ -309,8 +309,23 @@ const SLIDE_COVER_PAD = 0.08;
  * going through.
  */
 const GAP_TIME_FROM = 2.05;
+/**
+ * Where the warm-up hands over. Stage 1 stays loose enough to teach the jump;
+ * everything after it is the squeeze.
+ */
+const GAP_TIME_AT_STAGE1 = 1.7;
 const GAP_TIME_TO = 0.8;
-const GAP_TIME_SECONDS = 78;
+/**
+ * Seconds AFTER stage 1 to close the whole distance.
+ *
+ * The ramp aims below the floor on purpose and Math.max clamps it, so what this
+ * really sets is when the baseline arrives at MIN_GAP_TIME (~1.14s): about 33s
+ * in, against 60s before. Past that point the baseline cannot legally tighten
+ * further — a single obstacle always owes a full jump arc plus a reaction — so
+ * the escalation is handed to bursts, which are allowed inside that floor
+ * because the whole wave is telegraphed at once.
+ */
+const GAP_TIME_SECONDS = 32;
 /** Jitter shrinks with the ramp: a late run is relentless, not random. */
 const JITTER_FROM = 0.42;
 const JITTER_TO = 0.05;
@@ -341,7 +356,7 @@ const BURST_LEN_MAX = 4;
  * open as pairs and grow into four-beat runs, so the rhythm is something the
  * player learns a piece at a time rather than a wall that arrives whole.
  */
-const BURST_GROW_SECONDS = 34;
+const BURST_GROW_SECONDS = 26;
 /**
  * The breather, per extra member, added to the gap AFTER a wave.
  *
@@ -511,7 +526,7 @@ const BURGER_MARGIN = 60;
 const SMASH_BASE = 40;
 
 // --- Difficulty stages ------------------------------------------------------
-const STAGE_SECONDS = 13;
+const STAGE_SECONDS = 10;
 const STAGE_BEAMS = 1;
 const STAGE_WALLS = 2;
 const STAGE_PITS = 3;
@@ -1276,10 +1291,19 @@ export class RunnerGame extends BaseGame {
     if (prev === KIND_WALL && next === KIND_WALL) {
       floor = Math.max(floor, DASH_RECOVER + GAP_DRIFT_PAD);
     }
-    const ramp =
-      rampLinear(this.elapsed, GAP_TIME_FROM, GAP_TIME_TO, GAP_TIME_SECONDS) +
-      randRange(0, rampLinear(this.elapsed, JITTER_FROM, JITTER_TO, GAP_TIME_SECONDS));
-    return Math.max(floor, ramp);
+    // Piecewise: a gentle warm-up, then a steep squeeze once stage 1 is over.
+    // A single linear ramp from zero spends its steepest, most useful stretch on
+    // a player who is still learning which key does what.
+    const after = this.elapsed - STAGE_SECONDS;
+    const base =
+      after <= 0
+        ? rampLinear(this.elapsed, GAP_TIME_FROM, GAP_TIME_AT_STAGE1, STAGE_SECONDS)
+        : rampLinear(after, GAP_TIME_AT_STAGE1, GAP_TIME_TO, GAP_TIME_SECONDS);
+    const jitterSpan =
+      after <= 0
+        ? JITTER_FROM
+        : rampLinear(after, JITTER_FROM, JITTER_TO, GAP_TIME_SECONDS);
+    return Math.max(floor, base + randRange(0, jitterSpan));
   }
 
   /**
@@ -1817,14 +1841,16 @@ export class RunnerGame extends BaseGame {
     const beam = this.beamLead();
     const rising = this.airborne && this.vy < 0;
 
-    // ArrowDown is unambiguous, so it ducks whenever it is pressed in the air.
-    // The action button only ducks when a beam is actually there to answer:
-    // without that test a stray double tap — the way half the world tries to
-    // jump higher — slams the runner into the block they are mid-way over.
+    // Ducking is ArrowDown and ArrowDown only.
+    //
+    // The action button used to duck as well when a beam happened to be ahead,
+    // as a rescue for a jump taken a beat too early. It cost more than it
+    // saved: pressing the jump button and sliding instead is indistinguishable
+    // from a bug, and a player who never touched the down key has no way to
+    // explain it. One button, one verb. The rescue is still there — ArrowDown
+    // ducks mid-rise, which is exactly the input the situation calls for.
     if (rising && downEdge) {
       this.duck(beam >= 0 ? coverSlide(beam) : SLIDE_TAP);
-    } else if (rising && action && beam >= 0) {
-      this.duck(coverSlide(beam));
     } else if (action) {
       this.jumpBuffer = JUMP_BUFFER;
     }

@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { GameId, GameMeta } from "@/types/game";
 import type { RankingEntry } from "@/types/score";
 import { formatDate, formatScore } from "@/lib/format";
@@ -9,6 +9,8 @@ import { formatDate, formatScore } from "@/lib/format";
 interface RankingTableProps {
   games: readonly GameMeta[];
   initialGameId: GameId;
+  /** First tab, fetched on the server. Null when that fetch failed. */
+  initial: { configured: boolean; entries: RankingEntry[] } | null;
 }
 
 type LoadState =
@@ -23,14 +25,35 @@ const MEDALS: Record<number, { emoji: string; color: string }> = {
   3: { emoji: "🥉", color: "#e0a173" },
 };
 
-export default function RankingTable({ games, initialGameId }: RankingTableProps) {
+export default function RankingTable({
+  games,
+  initialGameId,
+  initial,
+}: RankingTableProps) {
   const [gameId, setGameId] = useState<GameId>(initialGameId);
   // Keyed by game so switching back to an already-loaded tab is instant and the
-  // effect never has to set a "loading" state synchronously.
-  const [loaded, setLoaded] = useState<Partial<Record<GameId, LoadState>>>({});
+  // effect never has to set a "loading" state synchronously. Seeded with what
+  // the server already sent, so the first tab never shows a skeleton.
+  const [loaded, setLoaded] = useState<Partial<Record<GameId, LoadState>>>(() =>
+    initial === null
+      ? {}
+      : {
+          [initialGameId]: initial.configured
+            ? { kind: "ready", entries: initial.entries }
+            : { kind: "unconfigured" },
+        }
+  );
   const state: LoadState = loaded[gameId] ?? { kind: "loading" };
 
+  // Tracks which tab arrived with the page, so the effect can skip re-fetching
+  // it on mount and then behave normally for every later switch.
+  const servedRef = useRef(initial === null ? null : initialGameId);
+
   useEffect(() => {
+    if (servedRef.current === gameId) {
+      servedRef.current = null;
+      return;
+    }
     const controller = new AbortController();
 
     const put = (next: LoadState) => setLoaded((prev) => ({ ...prev, [gameId]: next }));

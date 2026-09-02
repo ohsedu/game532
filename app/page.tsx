@@ -4,11 +4,16 @@ import { GAME_LIST } from "@/games/registry";
 import { getTopScores } from "@/lib/topScores";
 
 /**
- * Leaderboard numbers are rebuilt at most twice a minute: fresh enough that a
- * new record shows up while it still feels like news, cheap enough that a burst
- * of visitors does not become a burst of queries.
+ * Read fresh on every request.
+ *
+ * This page was cached for 30s, which meant a player could post a record, come
+ * back, and be shown the old one — indistinguishable from a broken query. The
+ * six lookups are indexed and run concurrently (~200ms measured), and a
+ * leaderboard that is wrong is worse than one that costs a fifth of a second.
+ * POST /api/scores also revalidates this path, so a submission from anywhere
+ * lands immediately.
  */
-export const revalidate = 30;
+export const revalidate = 0;
 
 export default async function HomePage() {
   const top = await getTopScores();

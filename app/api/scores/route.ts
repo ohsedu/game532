@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { revalidatePath } from "next/cache";
 import { isGameId, type GameId } from "@/types/game";
 import { NICKNAME_MAX, SCORE_MAX, type RankingEntry } from "@/types/score";
 import { sanitizeNickname } from "@/lib/format";
@@ -75,7 +76,16 @@ export async function GET(request: Request) {
     createdAt: row.created_at as string,
   }));
 
-  return NextResponse.json({ configured: true, entries });
+  return NextResponse.json(
+    { configured: true, entries },
+    {
+      headers: {
+        // Served from the edge for 20s, then handed over stale while it
+        // refreshes behind the scenes — so a tab switch is never a cold query.
+        "Cache-Control": "public, s-maxage=20, stale-while-revalidate=120",
+      },
+    }
+  );
 }
 
 export async function POST(request: Request) {
@@ -141,6 +151,13 @@ export async function POST(request: Request) {
     console.error("[api/scores] insert failed:", error.message);
     return bad("점수를 등록하지 못했습니다.", 502);
   }
+
+  // The pages that show leaderboards cache them. Without this a player who has
+  // just posted a record reloads and sees the old one, which reads as the query
+  // being broken rather than as a cache being young. The 30s window on the home
+  // page stays as a backstop for scores posted from other instances.
+  revalidatePath("/");
+  revalidatePath("/ranking");
 
   // Report back where the score landed so the client can jump to it.
   const { count } = await supabase
