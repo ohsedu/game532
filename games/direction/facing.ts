@@ -87,7 +87,7 @@ export function isVertical(dir: Dir): boolean {
  * Opening up/down changes the question itself from one bit to two, which is the
  * one escalation in this game that alters what the player is actually doing.
  */
-export const VERTICAL_START = 34;
+export const VERTICAL_START = 16;
 
 /**
  * Weight of a single vertical side against a horizontal side's 1. Asymptotic to
@@ -97,7 +97,7 @@ export const VERTICAL_START = 34;
  */
 export function verticalWeight(elapsed: number): number {
   if (elapsed < VERTICAL_START) return 0;
-  return rampAsymptotic(elapsed - VERTICAL_START, 0, 0.9, 26);
+  return rampAsymptotic(elapsed - VERTICAL_START, 0, 0.9, 15);
 }
 
 export interface SpawnRow {

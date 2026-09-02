@@ -17,6 +17,17 @@ type Phase = "ready" | "playing" | "over";
 
 const EMPTY_STATS: HudStat[] = [];
 
+/**
+ * Board width, capped by the height that is actually available.
+ *
+ * The board is a fixed 1000x700 ratio, so constraining only its width lets a
+ * short viewport push the hint line below the fold and force a scroll while
+ * playing. Deriving the width from the leftover height instead keeps the whole
+ * screen visible at any window size. 11rem covers the nav, the hint line (two
+ * lines on mobile) and the vertical padding.
+ */
+const BOARD_WIDTH = "min(100%, calc((100dvh - 11rem) * 10 / 7))";
+
 export default function GameShell({ meta }: { meta: GameMeta }) {
   const [phase, setPhase] = useState<Phase>("ready");
   const [paused, setPaused] = useState(false);
@@ -142,8 +153,11 @@ export default function GameShell({ meta }: { meta: GameMeta }) {
   }, []);
 
   return (
-    <main className="mx-auto flex w-full max-w-[1000px] flex-1 flex-col px-4 py-6 sm:px-6">
-      <nav className="mb-4 flex items-center justify-between gap-3">
+    <main className="mx-auto flex w-full max-w-[1000px] flex-1 flex-col justify-center px-4 py-6 sm:px-6">
+      <nav
+        className="mx-auto mb-4 flex w-full items-center justify-between gap-3"
+        style={{ maxWidth: BOARD_WIDTH }}
+      >
         <Link
           href="/"
           className="pill border border-line bg-surface px-4 py-2 text-xs text-ink-dim transition-colors hover:border-line-strong hover:text-ink"
@@ -162,8 +176,8 @@ export default function GameShell({ meta }: { meta: GameMeta }) {
       </nav>
 
       <div
-        className="card relative w-full overflow-hidden p-0"
-        style={{ aspectRatio: "1000 / 700" }}
+        className="card relative mx-auto w-full overflow-hidden p-0"
+        style={{ aspectRatio: "1000 / 700", maxWidth: BOARD_WIDTH }}
       >
         {phase === "ready" ? (
           <div
@@ -249,7 +263,10 @@ export default function GameShell({ meta }: { meta: GameMeta }) {
         )}
       </div>
 
-      <p className="mt-4 text-center text-xs leading-relaxed text-ink-faint">
+      <p
+        className="mx-auto mt-4 w-full text-center text-xs leading-relaxed text-ink-faint"
+        style={{ maxWidth: BOARD_WIDTH }}
+      >
         <span className="hidden sm:inline">
           ↑ ↓ ← → 로 조작 · <span className="text-ink-dim">ESC</span> 로 일시정지
         </span>
