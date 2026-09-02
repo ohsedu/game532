@@ -134,7 +134,7 @@ export default function TouchLayer({
   const left =
     mode === "sector" ? (
       <DPad accent={accent} input={input} disabled={disabled} />
-    ) : mode === "jump-slide" ? (
+    ) : mode === "jump-slide" || mode === "jump-slide-dash" ? (
       <ActionButton accent={accent} input={input} disabled={disabled} label="JUMP" big />
     ) : mode === "action" ? (
       <ActionButton accent={accent} input={input} disabled={disabled} label="TAP" big />
@@ -145,6 +145,14 @@ export default function TouchLayer({
   const right =
     mode === "sector" ? (
       <DPad accent={accent} input={input} disabled={disabled} />
+    ) : mode === "jump-slide-dash" ? (
+      // Jump goes under the dominant thumb on its own; the two situational
+      // moves share the other side, dash above slide so a panic press lands on
+      // the one that is nearly always right.
+      <div className="flex flex-col items-center gap-2">
+        <TapButton accent={accent} input={input} disabled={disabled} label="DASH" arrow="ArrowRight" />
+        <HoldButton accent={accent} input={input} disabled={disabled} label="SLIDE" />
+      </div>
     ) : mode === "jump-slide" ? (
       <HoldButton accent={accent} input={input} disabled={disabled} label="SLIDE" />
     ) : mode === "action" ? (
@@ -234,6 +242,44 @@ function ActionButton({
       onPointerUp={() => set(false)}
       onPointerCancel={() => set(false)}
       onPointerLeave={() => set(false)}
+      aria-label={label}
+    >
+      {label}
+    </button>
+  );
+}
+
+/**
+ * One-shot arrow press. For moves that fire on the press edge — a dash is a
+ * commitment, not something you steer with.
+ */
+function TapButton({
+  accent,
+  input,
+  disabled,
+  label,
+  arrow,
+}: {
+  accent: string;
+  input: InputManager | null;
+  disabled: boolean;
+  label: string;
+  arrow: ArrowKey;
+}) {
+  return (
+    <button
+      type="button"
+      disabled={disabled}
+      className={
+        "pointer-events-auto flex h-[var(--boost-size)] w-[var(--boost-size)] touch-none select-none items-center justify-center rounded-full border-2 bg-white/55 text-xs backdrop-blur-[2px] transition-transform active:scale-90 " +
+        (disabled ? "opacity-0" : "opacity-100")
+      }
+      style={{ borderColor: accent + "55", color: accent }}
+      onPointerDown={(e) => {
+        if (disabled || e.pointerType === "mouse") return;
+        e.preventDefault();
+        input?.virtualTap(arrow);
+      }}
       aria-label={label}
     >
       {label}

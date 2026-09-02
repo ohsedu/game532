@@ -56,5 +56,7 @@ export type TouchMode =
   | "tap"
   /** Left button jumps, right button slides. */
   | "jump-slide"
+  /** Jump on the left; slide and dash stacked on the right. */
+  | "jump-slide-dash"
   /** Tap the board directly; the game reads pointer coordinates. */
   | "pointer";

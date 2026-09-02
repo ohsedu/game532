@@ -3,30 +3,41 @@ import { circleRectHit, rectHit, type Circle, type Rect } from "@/games/core/Col
 import { OPENING_GRACE, rampAsymptotic, rampLinear, stage } from "@/games/core/curve";
 import { roundRect, text } from "@/games/core/draw";
 import type { ParticleOptions, ParticleShape } from "@/games/core/Particles";
-import { clamp, randRange } from "@/games/core/Vector2";
+import { clamp, randInt, randRange } from "@/games/core/Vector2";
 import {
   BEAM_FILL,
   BEAM_LINE,
   BLOCK_FILL,
   BLOCK_LINE,
+  BUN_FILL,
+  BUN_LINE,
   CEIL_FILL,
   CEIL_LINE,
   CEIL_TAPE,
   COIN_CORE,
   COIN_FILL,
   COIN_LINE,
+  createBurgerPool,
   createCoinPool,
   createObstaclePool,
   KIND_BEAM,
   KIND_BLOCK,
   KIND_CEIL,
   KIND_PIT,
+  KIND_WALL,
+  LETTUCE_FILL,
   LINK_LEAD,
+  LINK_MID,
   LINK_NONE,
   LINK_TAIL,
+  PATTY_FILL,
   PIT_RIM,
   PIT_RIM_LINE,
   TAU,
+  WALL_CHEV,
+  WALL_FILL,
+  WALL_LINE,
+  WALL_SEAM,
   type Obstacle,
   type ObstacleKind,
 } from "./entities";
@@ -66,14 +77,25 @@ const C_LINK_SOFT = "rgba(109,69,196,0.13)";
 /** Floor paint under a roof: the ground half of the no-jump telegraph. */
 const C_ROOF_ZONE = "rgba(255,180,67,0.2)";
 const C_ROOF_ZONE_LINE = "rgba(176,112,13,0.45)";
+/** Floor paint under a barricade: the run-up lane, so the cue is under the feet. */
+const C_WALL_ZONE = "rgba(34,37,45,0.14)";
+const C_WALL_ZONE_LINE = "rgba(18,20,27,0.5)";
 const C_GAUGE_TRACK = "rgba(34,37,45,0.09)";
+/** Streaks left behind the body while the dash is running. */
+const C_DASH_TRAIL = "rgba(167,123,255,0.5)";
 
 // --- Layout of the drawn card. Cosmetic only; the arena is the full space. ---
 const PANEL_PAD = 8;
 const PANEL_R = 30;
 /** Top surface of the floor. Everything vertical is measured from here. */
 const GROUND_Y = 520;
-/** The runner never moves horizontally; the world does. */
+/**
+ * Where the runner stands. The world does the moving — with exactly one
+ * exception: a dash pushes the body forward off this mark and then eases it
+ * back (see DASH_LUNGE). Everything that asks where the runner IS reads
+ * `this.runX`; RUN_X is only the home position and the nominal number the
+ * spawner sizes runways against.
+ */
 const RUN_X = 250;
 /**
  * Obstacles are born here, off the right edge. Nothing is readable before it
@@ -149,20 +171,63 @@ const SLIDE_MAX = 0.85;
  */
 const SLIDE_TAP = 0.44;
 
+// --- Dash -------------------------------------------------------------------
+/**
+ * The third answer, and the only one that goes forward instead of up or down.
+ *
+ * A dash is a quarter second of the body outrunning the world: it leaves the
+ * home mark at DASH_BOOST px/s on top of the scroll, so it genuinely closes on
+ * what is ahead, and then drifts back. It smashes a barricade and nothing else
+ * — running into any other shape mid-dash still ends the run, which is what
+ * makes reading the obstacle the whole content of the verb.
+ */
+const DASH_TIME = 0.24;
+const DASH_BOOST = 540;
+/** Total forward travel of one dash, 130px. Every booked gap is padded by it. */
+const DASH_LUNGE = DASH_TIME * DASH_BOOST;
+/** Drift home once the burst ends: 130px at this rate is 0.38s. */
+const DASH_RETURN = 340;
+/**
+ * Cooldown after the burst ends, and the press-to-press number every spacing
+ * rule is written against.
+ *
+ * 0.9s from one dash to the next available one. At 700px/s that is 630px, so
+ * two barricades 0.9s apart are both answerable — and the spawner is forbidden
+ * from placing them any closer (see gapTimeFor and burstGapTime).
+ */
+const DASH_COOL = 0.66;
+const DASH_RECOVER = DASH_TIME + DASH_COOL;
+/**
+ * Forward reach of the punch, used only to smash a barricade — never to kill.
+ *
+ * With it the press window is (DASH_TIME * (s + DASH_BOOST) + DASH_REACH) / s:
+ * 0.63s at the opening speed, 0.45s at 700px/s, 0.41s at the top of the ramp.
+ * It never falls under SLIDE_TAP's ballpark, so the newest verb is never the
+ * twitchiest one.
+ */
+const DASH_REACH = 26;
+/**
+ * A dash has to be started standing and settled, exactly as a slide does, so a
+ * barricade behind a jump books this the way a beam books SLIDE_SETUP.
+ */
+const DASH_SETUP = 0.18;
+/** Runway ahead of a barricade at which the approach warning fires, in seconds. */
+const WALL_WARN_LEAD = 0.85;
+
 // --- Speed ------------------------------------------------------------------
 /**
  * Asymptotic: always climbing, never past 900px/s.
  *
- * 380 at the gun, 598 at 30s, 726 at 60s, 841 at two minutes — where the old
- * curve was still at 604 after a full minute. 900 is where the ramp is not
- * allowed to go: an obstacle is legible for the 750px it spends on the card,
- * which at 900px/s is 0.83s, and that is REACT_MIN plus the 0.4s a hop needs
- * with nothing left over. The asymptote is never reached, so the tail of the
- * run keeps tightening without ever crossing the line.
+ * 380 at the gun, 655 at 30s, 784 at 60s, 874 at two minutes. The half-life is
+ * the only thing that moved — 900 is still where the ramp is not allowed to go:
+ * an obstacle is legible for the 750px it spends on the card, which at 900px/s
+ * is 0.83s, and that is REACT_MIN plus the 0.4s a hop needs with nothing left
+ * over. The asymptote is never reached, so the tail of the run keeps tightening
+ * without ever crossing the line; a shorter half-life just gets there sooner.
  */
 const SPEED_FROM = 380;
 const SPEED_RANGE = 520;
-const SPEED_HALF = 55;
+const SPEED_HALF = 40;
 
 // --- Spacing: the fairness rule --------------------------------------------
 /**
@@ -190,6 +255,27 @@ const BODY_SPAN = 2 * HW;
  * a percent, but a floor that is only nearly held is not a floor.
  */
 const GAP_DRIFT_PAD = 0.02;
+/**
+ * How far past an obstacle's own arrival the gap conversion looks, in seconds.
+ *
+ * A gap is spent at the speed the run has grown to by the time the player is
+ * standing in it, not at the speed it was booked at, so the conversion is aimed
+ * at the far end of the gap rather than the near one.
+ */
+const GAP_LOOKAHEAD = 1.2;
+/**
+ * Pixels added to EVERY booked gap, on top of the time floor, to pay for a
+ * dash the player has not taken yet.
+ *
+ * A dash carries the body up to DASH_LUNGE forward of the home mark, so for as
+ * long as it takes to drift back the runner meets whatever is ahead that much
+ * early. Padding the pad into every gap rather than only the ones that follow a
+ * barricade means a dash spent anywhere — on the right shape, on the wrong one,
+ * or on nothing at all — can never shorten the reaction window the next spawn
+ * was proven against. It is the one place the dash is allowed to cost the
+ * player nothing.
+ */
+const DASH_PAD = DASH_LUNGE;
 /** Landing from the previous obstacle costs a beat before the next decision. */
 const LAND_RECOVER = 0.12;
 /** A slide has to be started from the floor, which needs its own beat. */
@@ -212,38 +298,59 @@ const BEAM_TAKEOVER = MIN_GAP_TIME;
 /** Slack on a computed slide, so it is still down when the beam arrives. */
 const SLIDE_COVER_PAD = 0.08;
 /**
- * The spacing ramp, and the floor it converges onto rather than through. By
- * 95s the requested gap is 0.95s, which is under every floor gapTimeFor() can
- * produce (1.14s to 1.47s depending on the pairing), so from there on the run
- * is spaced at exactly the reaction floor and not one frame tighter.
+ * The spacing ramp, and the floor it converges onto rather than through.
+ *
+ * The ramp is asked for 0.8s by 78s, which is under every floor gapTimeFor()
+ * can produce (1.156s at the loosest end of the old set, 1.776s for the new
+ * barricade pairings), so from there on the baseline run is spaced at exactly
+ * the reaction floor and not one frame tighter. Aiming the ramp under the floor
+ * is the point: it is what guarantees the whole late game sits ON the floor
+ * rather than approaching it, and Math.max below is what keeps it from ever
+ * going through.
  */
 const GAP_TIME_FROM = 2.05;
-const GAP_TIME_TO = 0.95;
-const GAP_TIME_SECONDS = 95;
+const GAP_TIME_TO = 0.8;
+const GAP_TIME_SECONDS = 78;
 /** Jitter shrinks with the ramp: a late run is relentless, not random. */
 const JITTER_FROM = 0.42;
-const JITTER_TO = 0.08;
+const JITTER_TO = 0.05;
 
-// --- Compound pairs ---------------------------------------------------------
+// --- Bursts -----------------------------------------------------------------
 /**
- * Execution slack inside a pair, standing in for REACT_MIN.
+ * Execution slack inside a burst, standing in for REACT_MIN.
  *
- * A pair is not a surprise. Both halves are committed in the same spawn, they
- * share a rail on the floor, and the lead carries a badge of the verb that
- * follows it, so this window is not paying for recognition — only for the
- * second press. That is why it is allowed to be shorter than a cold reaction,
- * and why nothing else in the game is.
+ * A burst is not a surprise. Every member is committed in the same spawn, they
+ * share one rail on the floor carrying a verb glyph each, so this window is not
+ * paying for recognition — only for the next press. That is why it is allowed
+ * to be shorter than a cold reaction, and why nothing else in the game is.
  */
 const PAIR_REACT = 0.3;
 /** Getting out of the slide pose before the jump. */
 const PAIR_SLIDE_EXIT = 0.12;
 /** Winding up the jump once standing. */
 const PAIR_JUMP_PREP = 0.1;
-/** No pair is ever tighter than this, whatever the arithmetic says. */
+/** No link in a burst is ever tighter than this, whatever the arithmetic says. */
 const PAIR_MIN_TIME = 0.5;
-const PAIR_CHANCE_FROM = 0.3;
-const PAIR_CHANCE_TO = 0.52;
-const PAIR_CHANCE_SECONDS = 60;
+const PAIR_CHANCE_FROM = 0.34;
+const PAIR_CHANCE_TO = 0.66;
+const PAIR_CHANCE_SECONDS = 55;
+/** Hard cap on members in one wave. Four presses is already a mouthful. */
+const BURST_LEN_MAX = 4;
+/**
+ * Seconds after the burst stage unlocks per extra member the cap allows. Waves
+ * open as pairs and grow into four-beat runs, so the rhythm is something the
+ * player learns a piece at a time rather than a wall that arrives whole.
+ */
+const BURST_GROW_SECONDS = 34;
+/**
+ * The breather, per extra member, added to the gap AFTER a wave.
+ *
+ * This is the half of "파바박" that is not the burst: a cluster at the derived
+ * floor followed by a beat of open floor reads as a pattern, and the same
+ * cluster followed by the same tight gap reads as noise. It is paid on top of
+ * the ordinary ramped gap, so it can only ever hand back room.
+ */
+const BREATHER_PER_LINK = 0.3;
 
 // --- Obstacle sizing --------------------------------------------------------
 const BLOCK_H_MIN = 40;
@@ -299,6 +406,35 @@ const ROOF_W_MIN = 220;
 const ROOF_W_MAX = 620;
 /** Runway ahead of a roof at which the approach warning fires, in seconds. */
 const ROOF_WARN_LEAD = 0.9;
+/**
+ * The barricade, and the whole idea of the fourth answer.
+ *
+ * 230px of solid masonry standing on the floor. The arc peaks at 192, so there
+ * is no height of jump that puts the soles over it, and it reaches the ground,
+ * so there is no slot to slide into. Both of the first two verbs are removed by
+ * construction rather than by being made hard, which is what lets the shape
+ * mean exactly one thing: run at it.
+ */
+const WALL_H = 230;
+const WALL_W_MIN = 42;
+const WALL_W_MAX = 60;
+/**
+ * How far ahead of the slab the run-up lane is painted — and the reason a dash
+ * is always back in time for a barricade.
+ *
+ * The lane crosses the card edge before the slab does, so it, not the slab, is
+ * the moment a barricade becomes knowable. A dash spent before that moment has
+ * to have recovered by the time the slab arrives, or a player who spent it with
+ * nothing on screen to spend it on would die for a decision they could not have
+ * made. The runway the lane buys is (card edge - RUN_X + lead) / speed, and at
+ * the speed ceiling — which the ramp approaches and never reaches — that has to
+ * cover DASH_RECOVER. 150px is what reads well; the max is what keeps the
+ * guarantee true if any of the four numbers behind it is ever retuned.
+ */
+const WALL_LANE_LEAD = Math.max(
+  150,
+  DASH_RECOVER * (SPEED_FROM + SPEED_RANGE) - (1000 - PANEL_PAD - RUN_X)
+);
 
 // --- Coins ------------------------------------------------------------------
 const COIN_R = 11;
@@ -320,20 +456,27 @@ const COIN_LINE_STEP = 62;
 const COIN_GATE_PAD = 70;
 /**
  * Runway an arc must leave between where it puts the runner back on the floor
- * and the next obstacle: a landing, the slide setup in case that obstacle is a
- * beam, and a full reaction on top.
+ * and the next obstacle: a landing, the setup beat for whichever verb that
+ * obstacle wants, and a full reaction on top.
+ *
+ * The setup term is the largest of them rather than the slide's, so adding a
+ * verb can never quietly shorten this — the dash needs the same settled beat a
+ * slide does, and one that ever needs more would raise the margin instead of
+ * slipping under it.
  *
  * Without it a coin line could be laid across a gap that is long enough to fly
  * but not long enough to fly AND answer what comes next, which is the one way
  * an optional pickup could still take a run — the player did nothing wrong, the
  * line did.
  */
-const COIN_LAND_MARGIN = LAND_RECOVER + SLIDE_SETUP + REACT_MIN;
+const COIN_LAND_MARGIN = LAND_RECOVER + Math.max(SLIDE_SETUP, DASH_SETUP) + REACT_MIN;
 /** Obstacles are inflated by this before an arc is tested against them. */
 const COIN_SAFE_PAD = 14;
 const COIN_ARC_CHANCE = 0.62;
 const COIN_OPEN_CHANCE = 0.22;
 const COIN_BEAM_CHANCE = 0.5;
+/** Loot dropped behind a barricade, swept up by the lunge that broke it. */
+const COIN_WALL_CHANCE = 0.55;
 const COIN_VALUE = 22;
 /** Multiplier band. Every skim and every coin is scaled by it. */
 const MULT_MAX = 3;
@@ -343,28 +486,58 @@ const MULT_DECAY = 0.26;
 /** Grace after a pickup, so an arc is not already bleeding as it is collected. */
 const MULT_HOLD = 0.9;
 
+// --- The burger -------------------------------------------------------------
+/** Five seconds of smashing. Long enough to change the plan, short enough to
+ *  spend badly. */
+const BURGER_TIME = 5;
+/** The last second warns: blink rate, in Hz, and the audible tick with it. */
+const BURGER_WARN = 1;
+const BURGER_BLINK = 7;
+const BURGER_R = 17;
+/** Added to the radius for the pickup test, like a coin. */
+const BURGER_GRAB = 10;
+/**
+ * Seconds between burgers, rolled fresh each time.
+ *
+ * Rare enough that seeing one is an event rather than a rotation. The clock
+ * only starts once one has actually been placed, so a long stretch with no safe
+ * open floor does not silently bank up three of them.
+ */
+const BURGER_EVERY_MIN = 26;
+const BURGER_EVERY_MAX = 42;
+/** Clear floor a burger needs on either side before it may be placed. */
+const BURGER_MARGIN = 60;
+/** Paid per obstacle smashed. Above a near miss: a burger is a chance to push. */
+const SMASH_BASE = 40;
+
 // --- Difficulty stages ------------------------------------------------------
-const STAGE_SECONDS = 15;
+const STAGE_SECONDS = 13;
 const STAGE_BEAMS = 1;
-const STAGE_PITS = 2;
-const STAGE_ROOFS = 3;
-const STAGE_PAIRS = 4;
+const STAGE_WALLS = 2;
+const STAGE_PITS = 3;
+const STAGE_BURSTS = 4;
+const STAGE_ROOFS = 5;
 const ROOF_CHANCE = 0.16;
+const WALL_CHANCE = 0.18;
+/** Burgers only after the first verb has been taught. */
+const STAGE_BURGER = STAGE_BEAMS;
 const STAGE_NAMES: readonly string[] = [
-  "DASH",
+  "WARM UP",
   "LOW BEAMS",
+  "BARRICADE",
   "PITFALLS",
+  "RAPID FIRE",
   "LOW ROOF",
-  "LINKED",
   "FULL SPEED",
   "NO MERCY",
 ];
 const STAGE_SUBS: readonly string[] = [
   "HOLD THE JUMP FOR HEIGHT - COINS RIDE THE FULL ARC",
   "SLIDE UNDER: DOWN ARROW, OR TAP AS IT NEARS",
+  "DASH THROUGH THE DARK WALL - THE ONE YOU RUN AT",
   "MIND THE HOLES",
+  "THEY COME IN BURSTS - THE RAIL MARKS THE WAVE",
   "AMBER ROOF - DO NOT JUMP, JUST RUN",
-  "TWO IN A ROW - THE RAIL MARKS THE PAIR",
   "IT ONLY GETS FASTER",
   "STILL RUNNING",
 ];
@@ -385,16 +558,26 @@ const NEAR_PER_COMBO = 6;
 const NEAR_COMBO_CAP = 12;
 /** Paid for running a whole roof out without flinching. */
 const NERVE_BONUS = 30;
-/** Paid for clearing both halves of a compound pair. */
+/** Paid for busting a barricade, on top of the smash payout. */
+const BUST_BONUS = 35;
+/** Paid on the last member of a burst, for solving the whole wave. */
 const LINK_BONUS = 40;
 /** Combo lapses if a whole obstacle goes by without a skim. */
 const COMBO_DECAY = 4;
 
-// --- Multiplier gauge -------------------------------------------------------
+// --- Gauges -----------------------------------------------------------------
 const GAUGE_X = 44;
 const GAUGE_Y = 638;
 const GAUGE_W = 190;
 const GAUGE_H = 10;
+/** Dash readiness, mirrored on the far side so the two never crowd. */
+const DASH_GAUGE_W = 150;
+const DASH_GAUGE_X = 1000 - 44 - DASH_GAUGE_W;
+/** The burger clock. Top-right of the card, clear of the stage banner. */
+const POWER_X = 1000 - 44 - 196;
+const POWER_Y = 30;
+const POWER_W = 196;
+const POWER_H = 40;
 
 // --- Parallax ---------------------------------------------------------------
 // Fixed tiling layers. Numbers only: a repeating skyline costs one path per
@@ -473,25 +656,36 @@ function arcHeight(t: number): number {
 /**
  * DASH RUN, endless side-scrolling runner.
  *
- * The runner is pinned at RUN_X and the world scrolls past. There are three
- * answers — jump it, slide under it, or hold still and let the roof pass over
- * you — plus one optional question, the coin arcs, which are the only thing in
- * the game that asks for a bigger jump than survival needs.
+ * The runner holds RUN_X and the world scrolls past. There are four answers —
+ * jump it, slide under it, dash through it, or hold still and let the roof pass
+ * over you — plus one optional question, the coin arcs, which are the only
+ * thing in the game that asks for a bigger jump than survival needs, and one
+ * rare event, the burger, which turns five seconds of the run into demolition.
  *
  * The entire design effort is in guaranteeing the answer is available in time.
- * See gapTimeFor() and pairGapTime() for the spacing floors, the size clamps in
- * shapeObstacle() for the shapes, and bodySafeAt() for the coins: nothing is
- * ever committed that the speed it arrives at cannot clear.
+ * See gapTimeFor() and burstGapTime() for the spacing floors, the size clamps
+ * in shapeObstacle() for the shapes, and bodySafeAt() for the pickups: nothing
+ * is ever committed that the speed it arrives at cannot clear, and none of
+ * those guards ever consult the burger — a spawn that would be unfair sober is
+ * unfair, and is simply never made.
  */
 export class RunnerGame extends BaseGame {
-  private readonly obstacles = createObstaclePool(12);
+  // 16 slots: a four-member wave can be on the field with the tail of the
+  // previous one and the head of the next still alive.
+  private readonly obstacles = createObstaclePool(16);
   private readonly coins = createCoinPool(48);
+  private readonly burgers = createBurgerPool(2);
   /** Scratch rects for the kill test. Mutated in place, never re-created. */
   private readonly rBody: Rect = { x: 0, y: 0, w: 0, h: 0 };
   private readonly rObs: Rect = { x: 0, y: 0, w: 0, h: 0 };
   /** Full body box, no forgiveness inset: pickups should be generous. */
   private readonly rPick: Rect = { x: 0, y: 0, w: 0, h: 0 };
+  /** Swept body plus the punch reach, used only to break a barricade. */
+  private readonly rDash: Rect = { x: 0, y: 0, w: 0, h: 0 };
+  /** Swept path of the band a slide and a stand share. See resolveObstacles. */
+  private readonly rLow: Rect = { x: 0, y: 0, w: 0, h: 0 };
   private readonly cCoin: Circle = { x: 0, y: 0, r: COIN_R + COIN_GRAB };
+  private readonly cBurger: Circle = { x: 0, y: 0, r: BURGER_R + BURGER_GRAB };
   /** Candidate coin line, held here until every sample has been verified. */
   private readonly arcX = new Float64Array(COIN_ARC_MAX);
   private readonly arcY = new Float64Array(COIN_ARC_MAX);
@@ -519,6 +713,8 @@ export class RunnerGame extends BaseGame {
   ];
 
   // --- Runner state ---------------------------------------------------------
+  /** x of the body. RUN_X except while a dash is out and drifting home. */
+  private runX = RUN_X;
   /** y of the soles. The body is drawn upward from here. */
   private feetY = GROUND_Y;
   private vy = 0;
@@ -549,10 +745,39 @@ export class RunnerGame extends BaseGame {
   private slideDust = 0;
   /** Index of the pit the runner is committed to falling into, or -1. */
   private pitFall = -1;
+  /** Seconds of dash left. Above zero the pose is locked and the sweep is on. */
+  private dashT = 0;
+  private dashCool = 0;
+  /** Forward travel the dash added this frame, for the collision sweep. */
+  private dashStep = 0;
+  private dashTrail = 0;
+  /** Seconds of burger left. Every guard in the spawner ignores this. */
+  private powerT = 0;
+  /** Warning ticks already played in the last second, so each fires once. */
+  private powerTicks = 0;
+  /**
+   * Cached readouts, rebuilt only when the tenth or the whole second they show
+   * actually changes. Same reason as multLabel: a live clock would otherwise
+   * mint two throwaway strings every frame it is on screen.
+   */
+  private powerLabel = "";
+  private powerDigit = "";
+  private powerShown = -1;
+  /**
+   * True while a burger crossing of a pit is still owed its far lip.
+   *
+   * The burger runs across holes rather than falling in them. If the five
+   * seconds lapse with the body over open air the crossing is still honoured to
+   * the far side: a timer that expires mid-hole would be a death with no answer
+   * available, and the burger is not allowed to invent one of those.
+   */
+  private bridging = false;
 
   // --- World ---------------------------------------------------------------
   private dist = 0;
   private speed = SPEED_FROM;
+  /** Ground the world moved this frame. Half of the dash collision sweep. */
+  private worldStep = 0;
   private poolCursor = 0;
   private coinCursor = 0;
   /** Floor distance still to travel before the next obstacle is born. */
@@ -560,8 +785,10 @@ export class RunnerGame extends BaseGame {
   private lastKind: ObstacleKind = KIND_BLOCK;
   /** Decided one spawn ahead: the gap being booked has two ends, not one. */
   private nextKind: ObstacleKind = KIND_BLOCK;
-  /** Rolling id so a pair lead can find its own tail without a map. */
+  /** Rolling id so a burst can find the rest of itself without a map. */
   private group = 0;
+  /** Seconds of run left before another burger may be placed. */
+  private burgerWait = 0;
 
   // --- Score ---------------------------------------------------------------
   private bonus = 0;
@@ -602,10 +829,23 @@ export class RunnerGame extends BaseGame {
   protected onReset(): void {
     for (let i = 0; i < this.obstacles.length; i++) this.obstacles[i].active = false;
     for (let i = 0; i < this.coins.length; i++) this.coins[i].active = false;
+    for (let i = 0; i < this.burgers.length; i++) this.burgers[i].active = false;
     this.poolCursor = 0;
     this.coinCursor = 0;
     this.group = 0;
+    this.burgerWait = randRange(BURGER_EVERY_MIN, BURGER_EVERY_MAX) * 0.5;
 
+    this.runX = RUN_X;
+    this.dashT = 0;
+    this.dashCool = 0;
+    this.dashStep = 0;
+    this.dashTrail = 0;
+    this.powerT = 0;
+    this.powerTicks = 0;
+    this.powerLabel = "";
+    this.powerDigit = "";
+    this.powerShown = -1;
+    this.bridging = false;
     this.feetY = GROUND_Y;
     this.vy = 0;
     this.airborne = false;
@@ -627,6 +867,7 @@ export class RunnerGame extends BaseGame {
 
     this.dist = 0;
     this.speed = SPEED_FROM;
+    this.worldStep = 0;
     // A short runway on top of the ~2.3s an obstacle needs to travel in from
     // SPAWN_X. OPENING_GRACE is covered several times over.
     this.toNextSpawn = SPEED_FROM * 0.35;
@@ -680,6 +921,7 @@ export class RunnerGame extends BaseGame {
 
   protected onUpdate(dt: number): void {
     this.speed = this.speedAt(this.elapsed);
+    this.worldStep = this.speed * dt;
     this.dist += this.speed * dt;
     // Assigned rather than accumulated: distance is the source of truth, so a
     // near-miss bonus can never drift away from the metres actually run.
@@ -689,6 +931,8 @@ export class RunnerGame extends BaseGame {
     if (this.bannerT > 0) this.bannerT -= dt;
     if (this.popTimer > 0) this.popTimer -= dt;
     if (this.squash > 0) this.squash = Math.max(0, this.squash - dt * 5.5);
+    if (this.burgerWait > 0) this.burgerWait -= dt;
+    this.decayPower(dt);
     this.decayMult(dt);
     if (this.comboTimer > 0) {
       this.comboTimer -= dt;
@@ -741,9 +985,49 @@ export class RunnerGame extends BaseGame {
    * Speed used to turn gap times into pixels, deliberately shaded high: a gap
    * measured against a faster run is a longer gap, so the error can only ever
    * hand the player more room than the floor demands.
+   *
+   * `ahead` is the runway a burst has already committed, in seconds. Every
+   * member past the lead is met later and faster than the lead is, while
+   * GAP_DRIFT_PAD is a constant that does not grow with the wave — pricing a
+   * whole four-beat run against one number rolled for its lead left the last
+   * link a frame and a half inside its own floor. Each link is converted at the
+   * speed IT will be met at instead, which is what makes the pad a pad again.
    */
-  private gapSpeed(): number {
-    return this.arrivalSpeed(1.2);
+  private gapSpeed(ahead: number): number {
+    return this.arrivalSpeed(GAP_LOOKAHEAD + ahead);
+  }
+
+  /**
+   * Burns the burger clock down and spends the last second warning about it.
+   *
+   * The warning is deliberately loud — a blink AND a tick per half second —
+   * because the state it is ending changed what every obstacle on the field
+   * means. Being surprised by the last frame of invincibility is the one way a
+   * pickup could take a run.
+   */
+  private decayPower(dt: number): void {
+    if (this.powerT <= 0) return;
+    this.powerT -= dt;
+    if (this.powerT <= 0) {
+      this.powerT = 0;
+      this.powerTicks = 0;
+      this.powerShown = -1;
+      this.audio.play("warn", 0.55, 0.5);
+      return;
+    }
+    const tenths = Math.ceil(this.powerT * 10);
+    if (tenths !== this.powerShown) {
+      this.powerShown = tenths;
+      this.powerLabel = (tenths / 10).toFixed(1) + "s";
+      this.powerDigit = "" + Math.ceil(tenths / 10);
+    }
+    if (this.powerT > BURGER_WARN) return;
+    // Two ticks inside the final second, each fired exactly once.
+    const want = Math.ceil((BURGER_WARN - this.powerT) / 0.5);
+    if (want > this.powerTicks) {
+      this.powerTicks = want;
+      this.audio.play("warn", 1.5, 0.4);
+    }
   }
 
   private decayMult(dt: number): void {
@@ -778,17 +1062,22 @@ export class RunnerGame extends BaseGame {
 
   private scrollWorld(dt: number): void {
     const step = this.speed * dt;
-    const warnAt = RUN_X + this.speed * ROOF_WARN_LEAD;
+    const roofAt = this.runX + this.speed * ROOF_WARN_LEAD;
+    const wallAt = this.runX + this.speed * WALL_WARN_LEAD;
     for (let i = 0; i < this.obstacles.length; i++) {
       const o = this.obstacles[i];
       if (!o.active) continue;
       o.x -= step;
-      // The roof is the only obstacle whose answer is to do nothing, so it is
-      // the only one that gets a sound of its own on approach: by the time it
-      // is close enough to read, the instinct has already fired.
-      if (o.kind === KIND_CEIL && !o.warned && o.x < warnAt) {
+      // The two obstacles whose answer is not a jump get a sound of their own on
+      // approach, so the instinct has already been overridden by the time the
+      // shape is close enough to read: the roof wants nothing done at all, the
+      // barricade wants the one verb that goes forward.
+      if (o.kind === KIND_CEIL && !o.warned && o.x < roofAt) {
         o.warned = true;
         this.audio.play("warn", 0.62, 0.5);
+      } else if (o.kind === KIND_WALL && !o.warned && o.x < wallAt) {
+        o.warned = true;
+        this.audio.play("warn", 1.85, 0.45);
       }
       // Kept alive well past the runner so the near-miss payout has already
       // resolved before the slot is recycled.
@@ -800,18 +1089,28 @@ export class RunnerGame extends BaseGame {
       c.x -= step;
       if (c.x < -40) c.active = false;
     }
+    for (let i = 0; i < this.burgers.length; i++) {
+      const b = this.burgers[i];
+      if (!b.active) continue;
+      b.x -= step;
+      if (b.x < -50) b.active = false;
+    }
 
     this.toNextSpawn -= step;
     if (this.toNextSpawn <= 0) this.spawnObstacle();
   }
 
   /**
-   * Spawns the next challenge: one obstacle, or a compound pair committed as a
-   * single unit, plus whatever coin line decorates it.
+   * Spawns the next challenge: one obstacle, or a whole burst wave committed as
+   * a single unit, plus whatever coin line decorates it and — rarely — a burger
+   * in the open floor behind it.
    *
-   * Both halves of a pair are placed here rather than one now and one later,
-   * because the gap between them is derived from the speed at this instant —
-   * deciding the tail separately would measure it against a different number.
+   * Every member of a wave is placed here rather than one now and the rest
+   * later, because the gaps between them are derived from the speed at this
+   * instant; deciding a member separately would measure it against a different
+   * number. It is also what earns the wave its tighter spacing: the whole thing
+   * is on the rail before the first member is readable, so the player is being
+   * asked for execution, not for four cold reactions.
    */
   private spawnObstacle(): void {
     const lead = this.acquire();
@@ -823,7 +1122,6 @@ export class RunnerGame extends BaseGame {
     }
 
     const sw = this.sizingSpeed();
-    const sg = this.gapSpeed();
     const st = this.curStage;
     // Rolled one spawn early. The runway booked at the bottom is the gap
     // between THIS obstacle and the one after it, so both ends have to be known
@@ -832,36 +1130,52 @@ export class RunnerGame extends BaseGame {
     const kind = this.nextKind;
     this.shapeObstacle(lead, kind, sw, st);
 
-    const tailKind = this.pairPartner(kind, st);
-    if (tailKind !== -1) {
-      const tail = this.acquire();
-      if (tail) {
-        const gapT = this.pairGapTime(kind, tailKind, lead.w, sg);
-        this.shapeObstacle(tail, tailKind, sw, st);
-        tail.x = SPAWN_X + lead.w + BODY_SPAN + sg * gapT;
-        this.group++;
-        lead.link = LINK_LEAD;
-        lead.group = this.group;
-        lead.linkKind = tailKind;
-        tail.link = LINK_TAIL;
-        tail.group = this.group;
-        tail.linkKind = kind;
-        this.lastKind = tailKind;
-        this.nextKind = this.pickKind(st);
-        this.toNextSpawn =
-          tail.x - SPAWN_X + tail.w + BODY_SPAN + sg * this.gapTimeFor(tailKind, this.nextKind);
-        this.spawnCoinsFor(lead, sw, tail.x);
-        this.spawnCoinsFor(tail, sw, SPAWN_X + this.toNextSpawn);
-        return;
-      }
+    const want = this.burstLength(st, kind);
+    let prev = lead;
+    let members = 1;
+    // Runway this wave has already committed, in seconds. See gapSpeed().
+    let ahead = 0;
+    this.group++;
+    while (members < want) {
+      const next = this.acquire();
+      if (!next) break;
+      const sg = this.gapSpeed(ahead);
+      const nk = this.burstPartner(prev.kind);
+      const gapT = this.burstGapTime(prev.kind, nk, prev.w, sg);
+      this.shapeObstacle(next, nk, sw, st);
+      const run = prev.w + BODY_SPAN + DASH_PAD + sg * gapT;
+      next.x = prev.x + run;
+      // Converted at the CURRENT speed, which is the slowest the run will be at
+      // any point of the wave, so the lead time is over-estimated and the next
+      // link is priced against a speed the run cannot have exceeded by then.
+      ahead += run / this.speed;
+      prev.link = members === 1 ? LINK_LEAD : LINK_MID;
+      prev.group = this.group;
+      // Rewritten every time the wave grows, so the last one placed is the tail.
+      next.link = LINK_TAIL;
+      next.group = this.group;
+      // The gate for the member just settled is the one that follows it, which
+      // is why coins are laid a beat behind the placement loop.
+      this.spawnCoinsFor(prev, sw, next.x);
+      prev = next;
+      members++;
     }
 
     // pickKind reads lastKind for its beam bias, so the roll happens after the
     // just-spawned kind is recorded, not before it.
-    this.lastKind = kind;
+    this.lastKind = prev.kind;
     this.nextKind = this.pickKind(st);
-    this.toNextSpawn = lead.w + BODY_SPAN + sg * this.gapTimeFor(kind, this.nextKind);
-    this.spawnCoinsFor(lead, sw, SPAWN_X + this.toNextSpawn);
+    // The breather. A wave earns open floor behind it in proportion to how much
+    // it just asked for; without that the rhythm is uniform spam at a different
+    // rate rather than a pattern with a shape to learn.
+    const after =
+      this.gapTimeFor(prev.kind, this.nextKind) + (members - 1) * BREATHER_PER_LINK;
+    // The breather is the far end of the wave, so it is converted there too.
+    const sg = this.gapSpeed(ahead);
+    this.toNextSpawn = prev.x - SPAWN_X + prev.w + BODY_SPAN + DASH_PAD + sg * after;
+    const gate = SPAWN_X + this.toNextSpawn;
+    this.spawnCoinsFor(prev, sw, gate);
+    this.maybeSpawnBurger(prev, sg, gate);
   }
 
   /**
@@ -881,14 +1195,13 @@ export class RunnerGame extends BaseGame {
     o.tint = 0;
     o.link = LINK_NONE;
     o.group = 0;
-    o.linkKind = kind;
     o.warned = false;
 
     if (kind === KIND_BLOCK) {
       // Taller blocks late, but never past BLOCK_H_MAX: the arc peaks at 192px
       // and a block that eats most of that stops being a jump and becomes a
       // pixel-perfect launch.
-      const hMax = st >= 3 ? BLOCK_H_MAX : BLOCK_H_MAX - 16;
+      const hMax = st >= STAGE_PITS ? BLOCK_H_MAX : BLOCK_H_MAX - 16;
       o.h = randRange(BLOCK_H_MIN, hMax);
       // Width is capped by the time the jump actually spends above this block:
       // the crossing must fit inside it with BLOCK_CROSS_SAFETY to spare.
@@ -906,6 +1219,13 @@ export class RunnerGame extends BaseGame {
       // Length is a duration, not a distance: at any speed a roof is the same
       // number of seconds of holding still, which is what it actually costs.
       o.w = clamp(s * randRange(ROOF_TIME_MIN, ROOF_TIME_MAX), ROOF_W_MIN, ROOF_W_MAX);
+    } else if (kind === KIND_WALL) {
+      // The only obstacle with no width clamp to derive, because width is not
+      // what has to be survived: it breaks on contact, so a dash that reaches it
+      // at all has already answered it. The press window is set by DASH_TIME and
+      // DASH_REACH, and holds at every speed the ramp can produce.
+      o.h = WALL_H;
+      o.w = randRange(WALL_W_MIN, WALL_W_MAX);
     } else {
       // A pit may only claim a slice of the arc, so the take-off point is a
       // window rather than a frame.
@@ -944,6 +1264,18 @@ export class RunnerGame extends BaseGame {
     // A roof has to be entered already settled: arriving mid-arc would kill a
     // player who did everything right on the obstacle before it.
     if (next === KIND_CEIL) floor += ROOF_SETTLE;
+    // The dash owns the pose for its whole quarter second, so nothing else can
+    // be answered until it has run out.
+    if (prev === KIND_WALL) floor += DASH_TIME;
+    // And a dash has to be started standing and settled, exactly as a slide is.
+    if (next === KIND_WALL) floor += DASH_SETUP;
+    // Two barricades: the second press cannot land before the cooldown is back,
+    // so the arrivals themselves have to be DASH_RECOVER apart. The floor above
+    // already clears it several times over at these speeds; the guard is here so
+    // that stays true if any of the terms above are ever retuned down.
+    if (prev === KIND_WALL && next === KIND_WALL) {
+      floor = Math.max(floor, DASH_RECOVER + GAP_DRIFT_PAD);
+    }
     const ramp =
       rampLinear(this.elapsed, GAP_TIME_FROM, GAP_TIME_TO, GAP_TIME_SECONDS) +
       randRange(0, rampLinear(this.elapsed, JITTER_FROM, JITTER_TO, GAP_TIME_SECONDS));
@@ -951,81 +1283,123 @@ export class RunnerGame extends BaseGame {
   }
 
   /**
-   * Gap inside a compound pair, in seconds from the lead's trailing edge to the
-   * tail's leading edge. Tighter than gapTimeFor, and derived rather than
-   * guessed.
+   * Seconds a member of a wave needs between the leading edge arriving and the
+   * press that answers it being possible at all. The entry half of the burst
+   * arithmetic, kept in one place so every branch below agrees.
+   */
+  private static entryCost(kind: ObstacleKind): number {
+    // The arc has to be above the block before the leading edge lands, not
+    // merely started, so the rise is booked on top of the wind-up.
+    if (kind === KIND_BLOCK) return PAIR_JUMP_PREP + BLOCK_RISE_MAX;
+    if (kind === KIND_BEAM) return SLIDE_SETUP;
+    if (kind === KIND_WALL) return DASH_SETUP;
+    return PAIR_JUMP_PREP;
+  }
+
+  /**
+   * Gap inside a burst, in seconds from one member's trailing edge to the
+   * next's leading edge. Tighter than gapTimeFor, and derived rather than
+   * guessed — this is the number that makes a wave a wave.
    *
    * Jump first: the worst case is a take-off at the very leading edge of the
    * lead, so the runner is airborne for the whole AIR_MAX and lands
    * AIR_MAX * s further on, having already spent `leadW` of the gap in the air.
-   * What is left has to cover the landing, the pose change if the tail is a
-   * beam, and the press:
-   *     leadW / s + T - AIR_MAX - COYOTE >= LAND_RECOVER + SLIDE_SETUP + PAIR_REACT
+   * What is left has to cover the landing, the press, and the entry cost of
+   * whatever is next:
+   *     leadW / s + T - AIR_MAX - COYOTE >= LAND_RECOVER + PAIR_REACT + entry
    * COYOTE is in there because the latest take-off is not the leading edge: off
    * a pit lip the jump still registers a tenth of a second later, and the whole
-   * arc shifts with it. Charging every jump-first pair for it costs one frame
+   * arc shifts with it. Charging every jump-first link for it costs one frame
    * of tension on the blocks and removes an entire class of unclearable pit
-   * pairs, which is a trade worth making twice over.
+   * links, which is a trade worth making twice over.
    *
    * Slide first: a jump can be taken straight out of the slide pose (startJump
    * ends the slide), so all the gap has to buy is the pose change and the press.
+   *
+   * Dash first: the latest legal press is at contact, and the dash owns the
+   * pose for DASH_TIME after it, so that quarter second is the exit cost. Two
+   * barricades in one wave are additionally held apart by DASH_RECOVER, which
+   * is the cooldown measured press to press — and it is measured cleanly
+   * because every gap carries DASH_PAD, which is exactly the ground the lunge
+   * stole. Without that pad the second barricade would arrive DASH_LUNGE early
+   * and the cooldown arithmetic would be a lie.
    */
-  private pairGapTime(lead: ObstacleKind, tail: ObstacleKind, leadW: number, s: number): number {
+  private burstGapTime(lead: ObstacleKind, tail: ObstacleKind, leadW: number, s: number): number {
+    const entry = RunnerGame.entryCost(tail);
     if (lead === KIND_BEAM) {
-      return Math.max(
-        PAIR_MIN_TIME,
-        PAIR_SLIDE_EXIT + PAIR_REACT + PAIR_JUMP_PREP + GAP_DRIFT_PAD
-      );
+      return Math.max(PAIR_MIN_TIME, PAIR_SLIDE_EXIT + PAIR_REACT + entry + GAP_DRIFT_PAD);
+    }
+    if (lead === KIND_WALL) {
+      let t = DASH_TIME + PAIR_REACT + entry + GAP_DRIFT_PAD;
+      if (tail === KIND_WALL) t = Math.max(t, DASH_RECOVER + GAP_DRIFT_PAD);
+      return Math.max(PAIR_MIN_TIME, t);
     }
     const t =
-      AIR_MAX +
-      COYOTE +
-      GAP_DRIFT_PAD +
-      LAND_RECOVER +
-      PAIR_REACT +
-      (tail === KIND_BEAM ? SLIDE_SETUP : 0) +
-      // The second press is not the end of it when the tail is a block: the
-      // arc still has to be above it before its leading edge lands, and that
-      // rise is the difference between a tight pair and an uncrossable one.
-      // The slide-first branch already pays this as PAIR_JUMP_PREP; this one
-      // was reading the tail's kind for the beam beat and not for this.
-      (tail === KIND_BLOCK ? BLOCK_RISE_MAX : 0) -
-      leadW / s;
+      AIR_MAX + COYOTE + GAP_DRIFT_PAD + LAND_RECOVER + PAIR_REACT + entry - leadW / s;
     return Math.max(PAIR_MIN_TIME, t);
   }
 
   /**
-   * Partner kind for a compound pair, or -1 for a plain single.
+   * How many obstacles this spawn commits as one wave.
    *
-   * Pairs only ever chain two different verbs or two different shapes; two
-   * identical blocks back to back is a rhythm, not a decision. The roof is
-   * never part of one: its whole content is a long stretch of doing nothing,
-   * and bolting a second beat onto it would just be a normal gap.
+   * Waves are a stage, not a default: nothing before STAGE_BURSTS returns
+   * anything but 1, and by the time they unlock every kind they can contain has
+   * already been taught on its own. The cap grows a member at a time so the
+   * rhythm is learned in pieces. The roof never leads one — its whole content
+   * is a long stretch of doing nothing, and bolting beats onto that is just a
+   * normal gap with extra steps.
    */
-  private pairPartner(lead: ObstacleKind, st: number): ObstacleKind | -1 {
-    if (st < STAGE_PAIRS || lead === KIND_CEIL) return -1;
-    const chance = rampLinear(
-      this.elapsed - STAGE_PAIRS * STAGE_SECONDS,
-      PAIR_CHANCE_FROM,
-      PAIR_CHANCE_TO,
-      PAIR_CHANCE_SECONDS
-    );
-    if (Math.random() > chance) return -1;
-    // Slide then jump: the tightest pair in the game, and the only one whose
-    // two halves are on screen together.
-    if (lead === KIND_BEAM) return Math.random() < 0.6 ? KIND_BLOCK : KIND_PIT;
-    // Jump then slide, or two hops off different shapes.
-    if (Math.random() < 0.55) return KIND_BEAM;
-    return lead === KIND_BLOCK ? KIND_PIT : KIND_BLOCK;
+  private burstLength(st: number, kind: ObstacleKind): number {
+    if (st < STAGE_BURSTS || kind === KIND_CEIL) return 1;
+    const since = this.elapsed - STAGE_BURSTS * STAGE_SECONDS;
+    const chance = rampLinear(since, PAIR_CHANCE_FROM, PAIR_CHANCE_TO, PAIR_CHANCE_SECONDS);
+    if (Math.random() > chance) return 1;
+    const cap = Math.min(BURST_LEN_MAX, 2 + Math.floor(since / BURST_GROW_SECONDS));
+    return randInt(2, cap);
+  }
+
+  /**
+   * The next verb in a wave.
+   *
+   * Waves unlock after every kind they may contain, so there is nothing to gate
+   * here — only to bias. Chaining is always toward a DIFFERENT verb where it
+   * can be: the point of a burst is a sequence of decisions at speed, and four
+   * identical hops is one decision repeated. The roof is never in a wave.
+   */
+  private burstPartner(prev: ObstacleKind): ObstacleKind {
+    const r = Math.random();
+    if (prev === KIND_BEAM) {
+      // Out of the slide pose, into anything that leaves it.
+      if (r < 0.3) return KIND_WALL;
+      if (r < 0.72) return KIND_BLOCK;
+      return KIND_PIT;
+    }
+    if (prev === KIND_WALL) {
+      // Straight out of a dash. A second barricade is allowed and is the
+      // showpiece of the verb, but it is the rarest link because it is the one
+      // the cooldown has to stretch the wave for.
+      if (r < 0.34) return KIND_BEAM;
+      if (r < 0.68) return KIND_BLOCK;
+      if (r < 0.85) return KIND_PIT;
+      return KIND_WALL;
+    }
+    // Off a landing: the cheapest follow-up is the one that stays on the floor.
+    if (r < 0.42) return KIND_BEAM;
+    if (r < 0.66) return KIND_WALL;
+    return prev === KIND_BLOCK ? KIND_PIT : KIND_BLOCK;
   }
 
   /** Weighted kind roll. Variety unlocks in stages, like the other games. */
   private pickKind(st: number): ObstacleKind {
     if (st < STAGE_BEAMS) return KIND_BLOCK;
-    if (st < STAGE_PITS) return Math.random() < 0.62 ? KIND_BLOCK : KIND_BEAM;
+    if (st < STAGE_WALLS) return Math.random() < 0.62 ? KIND_BLOCK : KIND_BEAM;
     // Two roofs in a row would be one long roof with a seam in it.
     if (st >= STAGE_ROOFS && this.lastKind !== KIND_CEIL && Math.random() < ROOF_CHANCE) {
       return KIND_CEIL;
+    }
+    if (Math.random() < WALL_CHANCE) return KIND_WALL;
+    if (st < STAGE_PITS) {
+      return this.lastKind === KIND_BEAM || Math.random() < 0.5 ? KIND_BLOCK : KIND_BEAM;
     }
     const r = Math.random();
     // Two blocks in a row is fine; two beams in a row is a rhythm the player
@@ -1066,6 +1440,15 @@ export class RunnerGame extends BaseGame {
     }
     if (o.kind === KIND_BEAM) {
       if (r < COIN_BEAM_CHANCE) this.spawnLine(o.x + 24, o.x + o.w - 24, SLIDE_H);
+      return;
+    }
+    if (o.kind === KIND_WALL) {
+      // Loot on the far side, at running height, swept up by the lunge that
+      // broke through. The dash is the one verb that pays for itself.
+      if (r < COIN_WALL_CHANCE) {
+        const from = o.x + o.w + 50;
+        this.spawnLine(from, Math.min(from + COIN_LINE_STEP * 2, gateX - COIN_GATE_PAD), STAND_H);
+      }
       return;
     }
     if (r < COIN_ARC_CHANCE) {
@@ -1158,6 +1541,10 @@ export class RunnerGame extends BaseGame {
         if (bottom > GROUND_Y - o.h) return false;
       } else if (o.kind === KIND_BEAM || o.kind === KIND_CEIL) {
         if (top < GROUND_Y - o.h) return false;
+      } else if (o.kind === KIND_WALL) {
+        // Nothing fits past a barricade at any height, so no pickup may be laid
+        // in its column: a coin there would be drawing a line into masonry.
+        return false;
       } else if (bottom > GROUND_Y - 24) {
         // Floor height over a hole: the line would be drawing a run into it.
         return false;
@@ -1187,12 +1574,23 @@ export class RunnerGame extends BaseGame {
     for (let i = 0; i < this.coins.length; i++) {
       const coin = this.coins[i];
       if (!coin.active) continue;
-      if (coin.x < RUN_X - 60 || coin.x > RUN_X + 60) continue;
+      if (coin.x < this.runX - 60 || coin.x > this.runX + 60) continue;
       c.x = coin.x;
       c.y = coin.y;
       if (!circleRectHit(c, this.rPick)) continue;
       coin.active = false;
       this.takeCoin(coin.x, coin.y);
+    }
+    const b = this.cBurger;
+    for (let i = 0; i < this.burgers.length; i++) {
+      const bg = this.burgers[i];
+      if (!bg.active) continue;
+      if (bg.x < this.runX - 70 || bg.x > this.runX + 70) continue;
+      b.x = bg.x;
+      b.y = bg.y;
+      if (!circleRectHit(b, this.rPick)) continue;
+      bg.active = false;
+      this.takeBurger(bg.x, bg.y);
     }
   }
 
@@ -1224,19 +1622,111 @@ export class RunnerGame extends BaseGame {
     this.puff(x, y, 0, 0, 0.26, 5, 0, COIN_FILL, "ring", 1);
   }
 
+  // --- The burger ----------------------------------------------------------
+
+  /**
+   * Puts a burger in the open floor behind `o`, if one is due and the floor is
+   * actually open.
+   *
+   * It rides at running height in a clear stretch, so collecting it never asks
+   * for a jump, a slide or a dash — the only decision a burger creates is what
+   * to do with the five seconds, never how to reach it. bodySafeAt is the same
+   * guard the coins use and it does not know the burger exists: a spot that
+   * would be unsafe for a coin is unsafe for this. If nothing fits, the wait
+   * stands and the next spawn tries again rather than banking one up.
+   */
+  private maybeSpawnBurger(o: Obstacle, s: number, gateX: number): void {
+    if (this.burgerWait > 0 || this.curStage < STAGE_BURGER) return;
+    // A landing beat off the obstacle behind, and clear of the one ahead.
+    const from = o.x + o.w + s * LAND_RECOVER + BURGER_MARGIN;
+    const to = gateX - BURGER_MARGIN;
+    if (to <= from) return;
+    const x = (from + to) * 0.5;
+    if (!this.bodySafeAt(x, GROUND_Y, STAND_H)) return;
+    for (let i = 0; i < this.burgers.length; i++) {
+      const b = this.burgers[i];
+      if (b.active) continue;
+      b.active = true;
+      b.x = x;
+      b.y = GROUND_Y - STAND_H * 0.5;
+      b.phase = randRange(0, TAU);
+      this.burgerWait = randRange(BURGER_EVERY_MIN, BURGER_EVERY_MAX);
+      return;
+    }
+  }
+
+  /**
+   * Five seconds of demolition. Refreshed rather than stacked: a second burger
+   * inside the window resets the clock, so the readout never has to explain a
+   * number bigger than the one the pickup promised.
+   */
+  private takeBurger(x: number, y: number): void {
+    this.powerT = BURGER_TIME;
+    this.powerTicks = 0;
+    // Primed here rather than left to the next decayPower: the pickup frame is
+    // drawn before that runs, and a clock that starts blank for a frame is the
+    // one frame the player is most likely to be looking straight at it.
+    this.powerShown = BURGER_TIME * 10;
+    this.powerLabel = BURGER_TIME.toFixed(1) + "s";
+    this.powerDigit = "" + BURGER_TIME;
+    this.mult = Math.min(MULT_MAX, this.mult + MULT_GAIN * 2);
+    this.multHold = MULT_HOLD;
+    this.popText = "BURGER!";
+    this.popTimer = 0.9;
+    this.audio.play("success", 0.8, 0.75);
+    this.audio.play("spawn", 1.3, 0.5);
+    this.shake.add(5, 0.3);
+    for (let i = 0; i < 22; i++) {
+      const a = (i / 22) * TAU + randRange(-0.2, 0.2);
+      const sp = randRange(120, 340);
+      this.puff(
+        x,
+        y,
+        Math.cos(a) * sp,
+        Math.sin(a) * sp - 60,
+        randRange(0.3, 0.6),
+        randRange(2.5, 4.5),
+        0,
+        i % 3 === 0 ? BUN_FILL : i % 3 === 1 ? LETTUCE_FILL : PATTY_FILL,
+        i % 2 === 0 ? "circle" : "square",
+        0.28,
+        randRange(0, TAU)
+      );
+    }
+    this.puff(x, y, 0, 0, 0.4, 9, 0, BUN_FILL, "ring", 1);
+  }
+
   // --- Runner --------------------------------------------------------------
 
   private bodyH(): number {
     return this.sliding ? SLIDE_H : STAND_H;
   }
 
-  /** Floor height under the runner, or a value below the arena when over a pit. */
+  /**
+   * Floor height under the runner, or a value below the arena when over a pit.
+   *
+   * A burger runs across holes instead of falling into them, and `bridging`
+   * keeps that crossing honoured to the far lip even if the five seconds lapse
+   * on the way over. The latch can only ever be ARMED while the power is up, and
+   * is dropped the first frame there is solid ground underfoot, so it can never
+   * hand a sober runner a free pit.
+   */
   private groundY(): number {
     for (let i = 0; i < this.obstacles.length; i++) {
       const o = this.obstacles[i];
       if (!o.active || o.kind !== KIND_PIT) continue;
-      if (RUN_X > o.x + PIT_LIP && RUN_X < o.x + o.w - PIT_LIP) return this.height + 400;
+      if (this.runX <= o.x || this.runX >= o.x + o.w) continue;
+      // Armed on the OUTER edge of the hole, lips included, and not on the
+      // inner one the fall is measured against. The lip band is only 6px, but
+      // it is 6px in which the five seconds could lapse over a crossing the
+      // runner was already committed to, and the far side would then be a death
+      // with no press available. Arming a beat early removes the window instead
+      // of making it small enough to lose the argument about.
+      if (this.powerT > 0) this.bridging = true;
+      if (this.runX <= o.x + PIT_LIP || this.runX >= o.x + o.w - PIT_LIP) return GROUND_Y;
+      return this.bridging ? GROUND_Y : this.height + 400;
     }
+    this.bridging = false;
     return GROUND_Y;
   }
 
@@ -1245,7 +1735,7 @@ export class RunnerGame extends BaseGame {
     for (let i = 0; i < this.obstacles.length; i++) {
       const o = this.obstacles[i];
       if (!o.active || o.kind !== KIND_PIT) continue;
-      if (RUN_X > o.x - 40 && RUN_X < o.x + o.w + 40) return i;
+      if (this.runX > o.x - 40 && this.runX < o.x + o.w + 40) return i;
     }
     return -1;
   }
@@ -1266,8 +1756,8 @@ export class RunnerGame extends BaseGame {
       const o = this.obstacles[i];
       if (!o.active) continue;
       // Ahead while any part of it is still in front of the runner's box.
-      if (o.x + o.w <= RUN_X - HW) continue;
-      const d = o.x - (RUN_X + HW);
+      if (o.x + o.w <= this.runX - HW) continue;
+      const d = o.x - (this.runX + HW);
       if (d < lead) {
         lead = d;
         kind = o.kind;
@@ -1286,6 +1776,9 @@ export class RunnerGame extends BaseGame {
    */
   private answerBuffer(beam: number): void {
     if (this.jumpBuffer <= 0) return;
+    // A dash owns the pose for its whole duration; the press waits it out
+    // rather than firing out of a lunge.
+    if (this.dashT > 0) return;
     if (this.airborne && this.coyote <= 0) return;
     if (beam >= 0) {
       this.jumpBuffer = 0;
@@ -1305,7 +1798,7 @@ export class RunnerGame extends BaseGame {
     for (let i = 0; i < this.obstacles.length; i++) {
       const o = this.obstacles[i];
       if (!o.active || o.kind !== KIND_BEAM) continue;
-      if (RUN_X + HW < o.x || RUN_X - HW > o.x + o.w) continue;
+      if (this.runX + HW < o.x || this.runX - HW > o.x + o.w) continue;
       if (top < GROUND_Y - o.h) return true;
     }
     return false;
@@ -1315,6 +1808,10 @@ export class RunnerGame extends BaseGame {
     const action = this.input.justActioned();
     const downHeld = this.input.isDown("ArrowDown");
     const downEdge = this.input.justPressed("ArrowDown");
+    // ArrowRight is the dash on desktop and the DASH button on touch; both
+    // arrive as the same edge, so there is no touch-specific path.
+    if (this.input.justPressed("ArrowRight")) this.tryDash();
+    this.updateDash(dt);
     // Resolved once a frame: every branch below has to agree about which verb
     // the button currently means, or one press ends up meaning two things.
     const beam = this.beamLead();
@@ -1378,6 +1875,11 @@ export class RunnerGame extends BaseGame {
         this.airTime = 0;
         this.vy = 0;
         this.coyote = COYOTE;
+        // A dash is a ground move, and leaving the ground ends it. That is what
+        // keeps the swept collision box below exact: for the whole of a dash the
+        // body is standing at a fixed height, so a box swept in x alone is the
+        // real path and not an approximation of one.
+        if (this.dashT > 0) this.endDash();
       } else {
         this.coyote = COYOTE;
       }
@@ -1404,7 +1906,9 @@ export class RunnerGame extends BaseGame {
       // takeover window the hold means what it obviously means; outside it the
       // cap still denies a permanent crouch, which is the only thing the cap
       // was ever for.
-      if ((downEdge || (downHeld && beam >= 0)) && !this.sliding) {
+      // Not while a dash is out: the lunge is a committed pose, and a slide
+      // started inside it would be a second answer to the same press window.
+      if ((downEdge || (downHeld && beam >= 0)) && !this.sliding && this.dashT <= 0) {
         this.startSlide(beam >= 0 ? coverSlide(beam) : SLIDE_MIN);
       }
       if (this.sliding) {
@@ -1422,6 +1926,94 @@ export class RunnerGame extends BaseGame {
         if (up && !this.headBlocked() && !(downHeld && beam >= 0)) this.endSlide();
       }
     }
+  }
+
+  /**
+   * The dash press. Grounded only, off cooldown only, and never out from under
+   * a beam — standing up mid-slab is a death nobody asked for, and the dash
+   * stands the runner up.
+   *
+   * A refused press costs nothing: no cooldown is spent and no state changes,
+   * so mashing the button under a beam simply does not dash rather than
+   * silently eating the one press that mattered.
+   */
+  private tryDash(): void {
+    if (this.dashT > 0 || this.dashCool > 0) return;
+    if (this.airborne || this.headBlocked()) return;
+    this.dashT = DASH_TIME;
+    this.dashCool = DASH_RECOVER;
+    this.dashTrail = 0;
+    // A buffered jump would otherwise fire the instant the lunge ended, which
+    // is a hop the player asked for a quarter second and one decision ago.
+    this.jumpBuffer = 0;
+    if (this.sliding) this.endSlide();
+    this.audio.play("shoot", 1.5, 0.5);
+    this.shake.add(3, 0.12);
+    for (let i = 0; i < 9; i++) {
+      this.puff(
+        this.runX - 14 + randRange(-6, 6),
+        GROUND_Y - randRange(4, 60),
+        randRange(-520, -220),
+        randRange(-70, 70),
+        randRange(0.16, 0.32),
+        randRange(2.5, 5),
+        0,
+        i % 2 === 0 ? ACCENT : C_DUST,
+        "circle",
+        0.22
+      );
+    }
+  }
+
+  /**
+   * Advances the lunge and the drift home.
+   *
+   * The body genuinely outruns the world here — runX climbs while the scroll
+   * keeps going — so the closing speed on whatever is ahead is s + DASH_BOOST.
+   * dashStep is kept for the collision sweep: at dash speed a frame covers more
+   * ground than a barricade is wide, so the kill test has to look at the path
+   * rather than at the endpoint.
+   */
+  private updateDash(dt: number): void {
+    if (this.dashCool > 0) this.dashCool -= dt;
+    if (this.dashT > 0) {
+      const from = this.runX;
+      this.runX = Math.min(RUN_X + DASH_LUNGE, this.runX + DASH_BOOST * dt);
+      this.dashStep = this.runX - from;
+      // dashStep survives the expiry deliberately: the frame a dash runs out is
+      // still a frame the body travelled at dash speed, and the sweep below is
+      // keyed off the travel rather than off the timer. Zeroing it here would
+      // turn the last frame of a well-timed dash into a fatal collision with the
+      // barricade it was about to break.
+      this.dashT = Math.max(0, this.dashT - dt);
+      this.dashTrail -= dt;
+      if (this.dashTrail <= 0) {
+        this.dashTrail = 0.02;
+        this.puff(
+          this.runX - 18,
+          GROUND_Y - randRange(6, 70),
+          randRange(-420, -180),
+          randRange(-40, 40),
+          randRange(0.14, 0.26),
+          randRange(3, 6),
+          0,
+          C_DASH_TRAIL,
+          "square",
+          0.2,
+          randRange(0, TAU)
+        );
+      }
+      return;
+    }
+    this.dashStep = 0;
+    // The drift back. Every booked gap already carries DASH_PAD, so the runway
+    // the next obstacle was proven against survives the whole round trip.
+    if (this.runX > RUN_X) this.runX = Math.max(RUN_X, this.runX - DASH_RETURN * dt);
+  }
+
+  /** Cancels the lunge. dashStep is left alone; see updateDash. */
+  private endDash(): void {
+    this.dashT = 0;
   }
 
   private startJump(): void {
@@ -1450,7 +2042,7 @@ export class RunnerGame extends BaseGame {
     // Dust kicked backward out of the take-off, so the leap has a direction.
     for (let i = 0; i < 7; i++) {
       this.puff(
-        RUN_X + randRange(-10, 6),
+        this.runX + randRange(-10, 6),
         GROUND_Y - randRange(0, 5),
         randRange(-230, -70),
         randRange(-70, 10),
@@ -1481,7 +2073,7 @@ export class RunnerGame extends BaseGame {
 
     for (let i = 0; i < (hard ? 9 : 5); i++) {
       this.puff(
-        RUN_X + randRange(-14, 14),
+        this.runX + randRange(-14, 14),
         GROUND_Y - randRange(0, 4),
         randRange(-200, 60),
         randRange(-90, -10),
@@ -1505,7 +2097,7 @@ export class RunnerGame extends BaseGame {
       this.audio.play("shoot", 0.6, 0.28);
       for (let i = 0; i < 6; i++) {
         this.puff(
-          RUN_X + randRange(-8, 10),
+          this.runX + randRange(-8, 10),
           GROUND_Y - randRange(0, 6),
           randRange(-260, -90),
           randRange(-60, 5),
@@ -1551,7 +2143,7 @@ export class RunnerGame extends BaseGame {
     this.audio.play("shoot", stomp ? 0.9 : 0.75, 0.3);
     for (let i = 0; i < 5; i++) {
       this.puff(
-        RUN_X + randRange(-8, 8),
+        this.runX + randRange(-8, 8),
         this.feetY - randRange(4, 26),
         randRange(-140, -30),
         randRange(-120, -40),
@@ -1572,7 +2164,7 @@ export class RunnerGame extends BaseGame {
       if (this.slideDust <= 0) {
         this.slideDust = 0.035;
         this.puff(
-          RUN_X - 12,
+          this.runX - 12,
           GROUND_Y - randRange(1, 7),
           randRange(-320, -140),
           randRange(-90, -20),
@@ -1592,7 +2184,7 @@ export class RunnerGame extends BaseGame {
     // One puff per footfall rather than a constant stream.
     this.stepDust = clamp(28 / this.speed, 0.05, 0.16);
     this.puff(
-      RUN_X - 8 + randRange(-4, 4),
+      this.runX - 8 + randRange(-4, 4),
       GROUND_Y - randRange(0, 3),
       randRange(-150, -50),
       randRange(-40, -5),
@@ -1609,11 +2201,12 @@ export class RunnerGame extends BaseGame {
 
   private resolveObstacles(): void {
     const grace = this.elapsed <= OPENING_GRACE;
+    const powered = this.powerT > 0;
     const h = this.bodyH();
     const body = this.rBody;
     // Inset on all four sides. The soles matter as much as the head: a block
     // cleared by three pixels should read as cleared, not as a hit.
-    body.x = RUN_X - HW + FORGIVE;
+    body.x = this.runX - HW + FORGIVE;
     body.w = (HW - FORGIVE) * 2;
     body.y = this.feetY - h + FORGIVE;
     body.h = h - FORGIVE * 2;
@@ -1621,10 +2214,54 @@ export class RunnerGame extends BaseGame {
     // The pickup box is the body as drawn, not as collided: coins are the one
     // thing the player should get the benefit of the doubt on.
     const pick = this.rPick;
-    pick.x = RUN_X - HW;
+    pick.x = this.runX - HW;
     pick.w = HW * 2;
     pick.y = this.feetY - h;
     pick.h = h;
+
+    // The dash box: the frame's whole swept path, plus the reach of the punch.
+    //
+    // Relative to the world the body moved (scroll + lunge) this frame, which at
+    // dash speed is more ground than a barricade is wide — testing only the
+    // endpoint would let a slab pass clean through the runner on a slow frame.
+    // This one is allowed the whole body box because it can only ever end an
+    // obstacle early; the box that can end a RUN is swept separately and more
+    // carefully, below.
+    const dash = this.rDash;
+    // Keyed off travel OR the timer, and never off the timer alone: what breaks
+    // a barricade is a lunge being out, including the frame the quarter second
+    // ran out on, and including a frame in which the body has already reached
+    // the far end of its 130px and is only being carried by the scroll.
+    const sweep = this.dashStep + this.worldStep;
+    const punching = this.dashT > 0 || this.dashStep > 0;
+    if (punching) {
+      dash.x = body.x - sweep;
+      dash.w = body.w + sweep + DASH_REACH;
+      dash.y = body.y;
+      dash.h = body.h;
+    }
+    // The swept KILL box, and the reason it is only a band of the body.
+    //
+    // A frame may be as long as the loop's dt ceiling, and at dash speed that
+    // carries the body up to 72px past obstacles — further than the narrowest
+    // block the game may commit (38px) plus the 24px collision box, so a slab
+    // could pass clean through a runner who never left the floor. Sweeping the
+    // WHOLE box would be wrong on exactly one frame: the one where a dash stands
+    // the runner up out of a slide, where the tall box would be dragged back
+    // over ground only the short one crossed and a beam legally slid under would
+    // kill retroactively. The band both poses share is occupied either way, so
+    // sweeping it is exact on every frame — and it is the only band that
+    // matters, because everything that can tunnel stands on the floor and
+    // everything that hangs (a beam at 56px, a roof at 220) is wider than a
+    // frame of travel by construction.
+    const swept = this.dashStep > 0;
+    const low = this.rLow;
+    if (swept) {
+      low.x = body.x - sweep;
+      low.w = body.w + sweep;
+      low.y = this.feetY - SLIDE_H + FORGIVE;
+      low.h = SLIDE_H - FORGIVE * 2;
+    }
     const obs = this.rObs;
 
     for (let i = 0; i < this.obstacles.length; i++) {
@@ -1642,6 +2279,11 @@ export class RunnerGame extends BaseGame {
           obs.y = GROUND_Y - BEAM_TOP_H;
           obs.w = o.w;
           obs.h = BEAM_TOP_H - o.h;
+        } else if (o.kind === KIND_WALL) {
+          obs.x = o.x;
+          obs.y = GROUND_Y - o.h;
+          obs.w = o.w;
+          obs.h = o.h;
         } else {
           // The roof goes all the way to the top of the card: there is no
           // going over it, which is the entire reason it exists.
@@ -1650,14 +2292,33 @@ export class RunnerGame extends BaseGame {
           obs.w = o.w;
           obs.h = GROUND_Y - o.h - PANEL_PAD;
         }
-        if (!grace && rectHit(body, obs)) {
+        // A barricade breaks to a dash and to nothing else, and it is tested
+        // before the kill so a lunge that reaches one always answers it.
+        if (o.kind === KIND_WALL && punching && rectHit(dash, obs)) {
+          this.smash(o, true);
+          continue;
+        }
+        if (
+          !grace &&
+          (rectHit(body, obs) ||
+            // Plus the swept band, for the two kinds that stand on the floor and
+            // are narrow enough for one long frame of lunge to skip.
+            (swept && (o.kind === KIND_BLOCK || o.kind === KIND_WALL) && rectHit(low, obs)))
+        ) {
+          if (powered) {
+            // Five seconds where the answer to everything is to keep going.
+            this.smash(o, false);
+            continue;
+          }
           this.crash(
             i,
             o.kind === KIND_BLOCK
               ? "HIT A BLOCK"
               : o.kind === KIND_BEAM
                 ? "HIT A BEAM"
-                : "JUMPED INTO THE ROOF"
+                : o.kind === KIND_WALL
+                  ? "HIT THE BARRICADE"
+                  : "JUMPED INTO THE ROOF"
           );
           return;
         }
@@ -1671,21 +2332,28 @@ export class RunnerGame extends BaseGame {
         // Measured on the slide's press edge, and re-measured on every later
         // one, so what counts is the last commitment before the beam arrived
         // rather than some unrelated slide from earlier in the run.
-        if (this.slideStarted && o.x > RUN_X) o.minClear = Math.max(0, o.x - (RUN_X + HW));
-      } else if (o.kind !== KIND_CEIL && body.x < o.x + o.w && body.x + body.w > o.x) {
+        if (this.slideStarted && o.x > this.runX) {
+          o.minClear = Math.max(0, o.x - (this.runX + HW));
+        }
+      } else if (
+        o.kind !== KIND_CEIL &&
+        o.kind !== KIND_WALL &&
+        body.x < o.x + o.w &&
+        body.x + body.w > o.x
+      ) {
         // Smallest vertical gap seen while the two boxes overlapped: over the
         // top of a block, or above the lip of a pit.
         const clear = o.kind === KIND_BLOCK ? GROUND_Y - o.h - bodyBottom : GROUND_Y - bodyBottom;
         if (clear < o.minClear) o.minClear = clear;
       }
 
-      if (!o.scored && o.x + o.w < RUN_X - HW) {
+      if (!o.scored && o.x + o.w < this.runX - HW) {
         o.scored = true;
         if (o.kind === KIND_CEIL) {
           // Nothing to skim: the whole skill was in the press that never came,
           // so surviving the stretch is the payout condition.
           this.payClear(o, "NERVE", NERVE_BONUS);
-        } else {
+        } else if (o.kind !== KIND_WALL) {
           const limit = o.kind === KIND_BEAM ? NEAR_LEAD : NEAR_GAP;
           if (o.minClear >= 0 && o.minClear < limit) this.payClear(o, "", 0);
         }
@@ -1694,6 +2362,76 @@ export class RunnerGame extends BaseGame {
     }
     this.slideStarted = false;
     this.collectCoins();
+  }
+
+  /**
+   * Breaks one obstacle and pays for it. `busted` separates the two ways it can
+   * happen: a dash through a barricade, which is the verb working, and a burger
+   * flattening something that would otherwise have ended the run.
+   *
+   * Smashing scores on the combo scale, so five seconds of burger is a chance
+   * to push rather than a chance to relax — the player who spends them steering
+   * into obstacles out-scores the one who spends them coasting.
+   */
+  private smash(o: Obstacle, busted: boolean): void {
+    o.active = false;
+    o.scored = true;
+    this.combo++;
+    this.comboTimer = COMBO_DECAY;
+    this.comboLabel = "x" + this.combo;
+    const base =
+      SMASH_BASE +
+      (busted ? BUST_BONUS : 0) +
+      // A smashed tail never reaches the pass-behind payout, so the wave bonus
+      // is folded in here rather than silently dropped along with the obstacle.
+      (o.link === LINK_TAIL ? LINK_BONUS : 0) +
+      NEAR_PER_COMBO * Math.min(this.combo - 1, NEAR_COMBO_CAP);
+    const gain = Math.round(base * this.mult);
+    this.bonus += gain;
+    this.popText = (busted ? "BUSTED +" : "SMASH +") + gain;
+    this.popTimer = 0.8;
+    this.audio.play("hit", busted ? 0.75 : 0.6, 0.85);
+    this.audio.play("graze", 1.2 + Math.min(this.combo, 16) * 0.04, 0.6);
+    this.shake.add(busted ? 7 : 6, 0.22);
+
+    // Debris thrown off the thing that broke, in its own colours, so the player
+    // can see WHAT they just removed rather than a generic puff.
+    const cx = o.x + o.w * 0.5;
+    const cy = o.kind === KIND_BEAM ? GROUND_Y - o.h - 30 : GROUND_Y - Math.min(o.h, 120) * 0.5;
+    const a1 =
+      o.kind === KIND_WALL
+        ? WALL_FILL
+        : o.kind === KIND_BEAM
+          ? BEAM_FILL
+          : o.kind === KIND_CEIL
+            ? CEIL_FILL
+            : BLOCK_FILL[o.tint];
+    const a2 =
+      o.kind === KIND_WALL
+        ? WALL_SEAM
+        : o.kind === KIND_BEAM
+          ? BEAM_LINE
+          : o.kind === KIND_CEIL
+            ? CEIL_LINE
+            : BLOCK_LINE[o.tint];
+    for (let i = 0; i < 20; i++) {
+      const a = (i / 20) * TAU + randRange(-0.25, 0.25);
+      const sp = randRange(120, 460);
+      this.puff(
+        cx + randRange(-o.w * 0.4, o.w * 0.4),
+        cy + randRange(-26, 26),
+        Math.cos(a) * sp - 120,
+        Math.sin(a) * sp - 70,
+        randRange(0.3, 0.62),
+        randRange(2.5, 6),
+        0.5,
+        i % 3 === 0 ? a1 : i % 3 === 1 ? a2 : C_DUST,
+        i % 2 === 0 ? "square" : "circle",
+        0.32,
+        randRange(0, TAU)
+      );
+    }
+    this.puff(cx, cy, 0, 0, 0.36, 10, 0, busted ? WALL_LINE : ACCENT, "ring", 1);
   }
 
   /**
@@ -1717,7 +2455,7 @@ export class RunnerGame extends BaseGame {
     const y = o.kind === KIND_BLOCK || o.kind === KIND_PIT ? this.feetY : this.feetY - this.bodyH();
     for (let i = 0; i < 7; i++) {
       this.puff(
-        RUN_X + randRange(-6, 14),
+        this.runX + randRange(-6, 14),
         y + randRange(-6, 6),
         randRange(-380, -140),
         randRange(-120, 120),
@@ -1729,7 +2467,7 @@ export class RunnerGame extends BaseGame {
         0.25
       );
     }
-    this.puff(RUN_X, y, 0, 0, 0.3, 6, 0, ACCENT, "ring", 1);
+    this.puff(this.runX, y, 0, 0, 0.3, 6, 0, ACCENT, "ring", 1);
     this.audio.play("graze", 1 + Math.min(this.combo, 20) * 0.04, 0.7);
     this.shake.add(1.2 + Math.min(this.combo, 10) * 0.14, 0.12);
   }
@@ -1743,7 +2481,7 @@ export class RunnerGame extends BaseGame {
     this.audio.play("success", 1.1, 0.5);
     for (let i = 0; i < 10; i++) {
       this.puff(
-        RUN_X + randRange(-16, 16),
+        this.runX + randRange(-16, 16),
         this.feetY - this.bodyH() * 0.5,
         randRange(-260, -60),
         randRange(-170, 30),
@@ -1764,7 +2502,7 @@ export class RunnerGame extends BaseGame {
     if (this.status !== "playing") return;
     this.killer = index;
     this.killLabel = label;
-    this.killX = RUN_X;
+    this.killX = this.runX;
     this.fell = fell;
     // Tumble: thrown back and up off whatever was hit, spinning the way the
     // impact would have turned them. Falling into a pit gets no bounce — the
@@ -1778,7 +2516,7 @@ export class RunnerGame extends BaseGame {
       const a = (i / 34) * TAU + randRange(-0.25, 0.25);
       const s = randRange(90, 400);
       this.puff(
-        RUN_X,
+        this.runX,
         this.feetY - this.bodyH() * 0.5,
         Math.cos(a) * s,
         Math.sin(a) * s,
@@ -1791,7 +2529,7 @@ export class RunnerGame extends BaseGame {
         randRange(0, TAU)
       );
     }
-    this.puff(RUN_X, this.feetY - 30, 0, 0, 0.6, 9, 0, ACCENT, "ring", 1);
+    this.puff(this.runX, this.feetY - 30, 0, 0, 0.6, 9, 0, ACCENT, "ring", 1);
 
     this.shake.add(15, 0.7);
     this.audio.play("death");
@@ -1872,6 +2610,7 @@ export class RunnerGame extends BaseGame {
     this.drawLinks(g);
     this.drawObstacles(g);
     this.drawCoins(g);
+    this.drawBurgers(g);
     this.drawRunner(g);
     if (this.status === "gameover") this.drawKillMark(g);
     g.restore();
@@ -1968,7 +2707,35 @@ export class RunnerGame extends BaseGame {
       // over the head.
       if (o.kind === KIND_PIT) this.drawPit(g, o, bottom);
       else if (o.kind === KIND_CEIL && fade > 0) this.drawRoofZone(g, o, fade);
+      else if (o.kind === KIND_WALL && fade > 0) this.drawWallLane(g, o, fade);
     }
+  }
+
+  /**
+   * The run-up lane: an ink chevron track painted on the floor leading into a
+   * barricade. Same trick as the roof's amber hatching — the instruction is
+   * under the feet as well as in front of them, and it arrives first, because
+   * the lane reaches the runner before the slab does.
+   */
+  private drawWallLane(g: CanvasRenderingContext2D, o: Obstacle, fade: number): void {
+    const from = o.x - WALL_LANE_LEAD;
+    g.save();
+    g.globalAlpha = fade;
+    g.fillStyle = C_WALL_ZONE;
+    roundRect(g, from, GROUND_Y + 4, o.w + WALL_LANE_LEAD, 22, 6);
+    g.fill();
+    g.strokeStyle = C_WALL_ZONE_LINE;
+    g.lineWidth = 3;
+    g.lineJoin = "round";
+    g.lineCap = "round";
+    g.beginPath();
+    for (let x = from + 14; x < o.x; x += 28) {
+      g.moveTo(x - 5, GROUND_Y + 9);
+      g.lineTo(x + 5, GROUND_Y + 15);
+      g.lineTo(x - 5, GROUND_Y + 21);
+    }
+    g.stroke();
+    g.restore();
   }
 
   private drawPit(g: CanvasRenderingContext2D, o: Obstacle, bottom: number): void {
@@ -2018,43 +2785,39 @@ export class RunnerGame extends BaseGame {
   }
 
   /**
-   * The rail that says two obstacles are one challenge.
+   * The rail that says a run of obstacles is one challenge.
    *
-   * Drawn in the floor band under both halves, with a verb glyph on each: an up
-   * arrow for the ones you leave the ground for, a down arrow for the beam. The
-   * tail of a pair is often still off the right edge when the lead arrives —
-   * the gap is longer than the visible runway at speed — so the rail running
-   * off the edge with a glyph on its end IS the telegraph, not a decoration of
-   * one.
+   * Drawn in the floor band under the whole wave, with a verb glyph on every
+   * member: an up arrow for the ones you leave the ground for, a down arrow for
+   * the beam, a forward arrow for the barricade. The far members of a wave are
+   * usually still off the right edge when the first one arrives — the gaps are
+   * longer than the visible runway at speed — so the rail running off the edge
+   * with a badge parked on the border IS the telegraph, not a decoration of one.
+   * It is also what earns a burst its tighter spacing: the player is reading the
+   * whole sequence before the first press, not four separate surprises.
    */
   private drawLinks(g: CanvasRenderingContext2D): void {
     const fade = this.runFade();
     if (fade <= 0) return;
-    // Anchored on the tail, not the lead. The lead is recycled once it is well
-    // behind the runner, and that happens before the far half of a wide pair
-    // has even arrived — a rail that vanished there would drop the marking off
-    // the exact obstacle it was drawn to warn about.
+    // Anchored on the tail, not the lead. Earlier members are recycled once they
+    // are well behind the runner, and that happens before the far end of a wide
+    // wave has even arrived — a rail that vanished there would drop the marking
+    // off the exact obstacle it was drawn to warn about.
     for (let i = 0; i < this.obstacles.length; i++) {
       const tail = this.obstacles[i];
       if (!tail.active || tail.link !== LINK_TAIL) continue;
       const endX = tail.x + tail.w;
       // Off the left edge when the lead is already gone, so the rail still
-      // reads as something that started before the visible half.
+      // reads as something that started before the visible members.
       let startX = -200;
-      let leadX = -1;
       for (let j = 0; j < this.obstacles.length; j++) {
         const lead = this.obstacles[j];
         if (lead.active && lead.link === LINK_LEAD && lead.group === tail.group) {
           startX = lead.x;
-          leadX = lead.x + lead.w * 0.5;
           break;
         }
       }
       if (endX < -60 || startX > this.width + 60) continue;
-      // The tail is usually still off the right edge: at speed the pair gap is
-      // longer than the visible runway, so the badge is parked at the border
-      // and that is what announces the second half before it can be seen.
-      const glyphX = Math.min(tail.x + tail.w * 0.5, this.width - 34);
 
       g.save();
       g.globalAlpha = fade;
@@ -2062,8 +2825,8 @@ export class RunnerGame extends BaseGame {
       roundRect(g, startX, GROUND_Y + 30, endX - startX, 22, 11);
       g.fill();
 
-      // Chevrons pointing at the second half, skipped over any open hole. The
-      // rail can be twice the width of the card while the tail is still out
+      // Chevrons running the length of the wave, skipped over any open hole.
+      // The rail can be twice the width of the card while the tail is still out
       // there, so the run is clipped to what can actually be seen.
       g.strokeStyle = C_LINK;
       g.lineWidth = 2.5;
@@ -2080,8 +2843,15 @@ export class RunnerGame extends BaseGame {
       g.stroke();
       g.restore();
 
-      if (leadX >= 0) this.drawVerbGlyph(g, leadX, tail.linkKind, fade);
-      this.drawVerbGlyph(g, glyphX, tail.kind, fade);
+      // One badge per member, the far ones parked on the border so a wave that
+      // is mostly still off screen still announces every press it will want.
+      for (let j = 0; j < this.obstacles.length; j++) {
+        const m = this.obstacles[j];
+        if (!m.active || m.group !== tail.group || m.link === LINK_NONE) continue;
+        const gx = Math.min(m.x + m.w * 0.5, this.width - 34);
+        if (gx < -30) continue;
+        this.drawVerbGlyph(g, gx, m.kind, fade);
+      }
     }
   }
 
@@ -2095,7 +2865,11 @@ export class RunnerGame extends BaseGame {
     return false;
   }
 
-  /** Small disc on the rail: up arrow to leave the floor, down arrow to hug it. */
+  /**
+   * Small disc on the rail: up arrow to leave the floor, down arrow to hug it,
+   * forward arrow to run straight at it. Three glyphs for three directions of
+   * answer, which is the whole grammar of the game on one badge.
+   */
   private drawVerbGlyph(
     g: CanvasRenderingContext2D,
     x: number,
@@ -2105,22 +2879,28 @@ export class RunnerGame extends BaseGame {
     const y = GROUND_Y + 41;
     g.save();
     g.globalAlpha = fade;
-    g.fillStyle = C_WHITE;
+    g.fillStyle = kind === KIND_WALL ? WALL_FILL : C_WHITE;
     g.beginPath();
     g.arc(x, y, 12, 0, TAU);
     g.fill();
-    g.strokeStyle = C_LINK;
+    g.strokeStyle = kind === KIND_WALL ? WALL_LINE : C_LINK;
     g.lineWidth = 2;
     g.stroke();
-    g.strokeStyle = ACCENT_DARK;
+    g.strokeStyle = kind === KIND_WALL ? WALL_CHEV : ACCENT_DARK;
     g.lineWidth = 3;
     g.lineCap = "round";
     g.lineJoin = "round";
-    const dir = kind === KIND_BEAM ? 1 : -1;
     g.beginPath();
-    g.moveTo(x - 6, y + 2 * dir);
-    g.lineTo(x, y - 4 * dir);
-    g.lineTo(x + 6, y + 2 * dir);
+    if (kind === KIND_WALL) {
+      g.moveTo(x - 4, y - 6);
+      g.lineTo(x + 4, y);
+      g.lineTo(x - 4, y + 6);
+    } else {
+      const dir = kind === KIND_BEAM ? 1 : -1;
+      g.moveTo(x - 6, y + 2 * dir);
+      g.lineTo(x, y - 4 * dir);
+      g.lineTo(x + 6, y + 2 * dir);
+    }
     g.stroke();
     g.restore();
   }
@@ -2141,6 +2921,7 @@ export class RunnerGame extends BaseGame {
       if (o.x > this.width + 60 || o.x + o.w < -60) continue;
       if (o.kind === KIND_BLOCK) this.drawBlock(g, o, cue, fade);
       else if (o.kind === KIND_BEAM) this.drawBeam(g, o, cue, fade);
+      else if (o.kind === KIND_WALL) this.drawWall(g, o, fade);
       else this.drawRoof(g, o, fade);
     }
     g.globalAlpha = 1;
@@ -2267,6 +3048,89 @@ export class RunnerGame extends BaseGame {
   }
 
   /**
+   * The barricade. The only near-black object in a near-white game, which makes
+   * it the highest-contrast thing that can be on the card — appropriate, since
+   * it is the shape most likely to end the run.
+   *
+   * Everything about it says "solid, and pointed at you": no candy gloss, no
+   * face, no rounded corners worth the name, stacked masonry courses with light
+   * mortar between them, and a column of white forward chevrons running up the
+   * middle. Nothing else in the run is dark and nothing else points sideways, so
+   * the read costs no learning at all: the arrows are the direction of the
+   * answer, and the answer is straight through.
+   */
+  private drawWall(g: CanvasRenderingContext2D, o: Obstacle, fade: number): void {
+    const top = GROUND_Y - o.h;
+    const cx = o.x + o.w * 0.5;
+
+    g.fillStyle = C_SHADOW;
+    g.beginPath();
+    g.ellipse(cx + 5, GROUND_Y + 5, o.w * 0.72, 9, 0, 0, TAU);
+    g.fill();
+
+    g.fillStyle = WALL_FILL;
+    roundRect(g, o.x, top, o.w, o.h + 4, 4);
+    g.fill();
+    g.strokeStyle = WALL_LINE;
+    g.lineWidth = 3;
+    g.stroke();
+
+    // Masonry courses, offset every other row, so it reads as something built
+    // rather than as a black bar. This is also what makes the debris legible
+    // when it breaks: the pieces are the courses.
+    g.save();
+    g.beginPath();
+    g.rect(o.x, top, o.w, o.h);
+    g.clip();
+    g.strokeStyle = WALL_SEAM;
+    g.lineWidth = 2;
+    g.beginPath();
+    for (let k = 1; k * 26 < o.h; k++) {
+      const y = top + k * 26;
+      g.moveTo(o.x, y);
+      g.lineTo(o.x + o.w, y);
+      const vx = o.x + (k % 2 === 0 ? o.w * 0.34 : o.w * 0.66);
+      g.moveTo(vx, y);
+      g.lineTo(vx, y + 26);
+    }
+    g.stroke();
+    g.restore();
+
+    // The run-at arrows. Pulsing, white, and stacked the height of the body's
+    // eye line so they are unmissable at the moment the decision has to be made.
+    const pulse = 0.72 + 0.28 * Math.sin(this.elapsed * 8 + o.phase);
+    g.save();
+    g.globalAlpha = pulse * fade;
+    g.strokeStyle = WALL_CHEV;
+    g.lineWidth = 5;
+    g.lineCap = "round";
+    g.lineJoin = "round";
+    g.beginPath();
+    for (let k = 0; k < 3; k++) {
+      const y = GROUND_Y - 44 - k * 38;
+      g.moveTo(cx - 9, y - 11);
+      g.lineTo(cx + 8, y);
+      g.lineTo(cx - 9, y + 11);
+    }
+    g.stroke();
+    g.restore();
+
+    // A hairline crack down the middle: the shape tells you it is breakable
+    // before anything has broken.
+    g.save();
+    g.globalAlpha = 0.5 * fade;
+    g.strokeStyle = WALL_SEAM;
+    g.lineWidth = 2;
+    g.beginPath();
+    g.moveTo(cx - 6, top + 6);
+    g.lineTo(cx + 4, top + o.h * 0.3);
+    g.lineTo(cx - 5, top + o.h * 0.62);
+    g.lineTo(cx + 3, GROUND_Y - 4);
+    g.stroke();
+    g.restore();
+  }
+
+  /**
    * The roof. Everything about it is deliberately unlike the other three: no
    * candy gloss, no face, no rounded friendliness — a flat amber slab wearing
    * ink hazard tape on the edge that kills, hanging off the top of the card so
@@ -2388,6 +3252,66 @@ export class RunnerGame extends BaseGame {
   }
 
   /**
+   * The burger: bun, lettuce, patty, bun. Food colours and a stacked silhouette,
+   * so it cannot be read as a hazard even though it shares the warm end of the
+   * palette with the roof — nothing that kills in this game is layered, and
+   * nothing that kills bobs.
+   */
+  private drawBurgers(g: CanvasRenderingContext2D): void {
+    const fade = this.runFade();
+    if (fade <= 0) return;
+    for (let i = 0; i < this.burgers.length; i++) {
+      const b = this.burgers[i];
+      if (!b.active) continue;
+      if (b.x < -40 || b.x > this.width + 40) continue;
+      const bob = Math.sin(b.phase + this.elapsed * 3) * 5;
+      const y = b.y + bob;
+      const w = BURGER_R * 1.5;
+
+      g.save();
+      g.globalAlpha = fade;
+      // A soft halo ring rather than a glow: additive would wash this card out.
+      g.strokeStyle = BUN_LINE;
+      g.globalAlpha = fade * (0.18 + 0.12 * Math.sin(b.phase + this.elapsed * 5));
+      g.lineWidth = 3;
+      g.beginPath();
+      g.arc(b.x, y, BURGER_R + 12, 0, TAU);
+      g.stroke();
+
+      g.globalAlpha = fade;
+      g.strokeStyle = BUN_LINE;
+      g.lineWidth = 2.5;
+      // Top bun.
+      g.fillStyle = BUN_FILL;
+      g.beginPath();
+      g.ellipse(b.x, y - 6, w, 12, 0, Math.PI, TAU);
+      g.fill();
+      g.stroke();
+      // Lettuce, drawn as a wavy band so the layer is legible at speed.
+      g.fillStyle = LETTUCE_FILL;
+      roundRect(g, b.x - w, y - 5, w * 2, 7, 3);
+      g.fill();
+      // Patty.
+      g.fillStyle = PATTY_FILL;
+      roundRect(g, b.x - w * 0.94, y + 1, w * 1.88, 8, 3);
+      g.fill();
+      // Bottom bun.
+      g.fillStyle = BUN_FILL;
+      roundRect(g, b.x - w, y + 8, w * 2, 9, 4);
+      g.fill();
+      g.stroke();
+      // Sesame.
+      g.fillStyle = C_WHITE;
+      g.beginPath();
+      g.arc(b.x - 6, y - 11, 1.8, 0, TAU);
+      g.arc(b.x + 5, y - 13, 1.8, 0, TAU);
+      g.arc(b.x + 12, y - 9, 1.8, 0, TAU);
+      g.fill();
+      g.restore();
+    }
+  }
+
+  /**
    * Everything the run owns fades out together after death; the exponent makes
    * the tail linger, which is where the slow-motion feel comes from without
    * touching real time.
@@ -2413,7 +3337,7 @@ export class RunnerGame extends BaseGame {
     g.globalAlpha = 0.55 * k * fade;
     g.fillStyle = C_SHADOW;
     g.beginPath();
-    g.ellipse(RUN_X + this.deadX, GROUND_Y + 4, 26 * k + 8, 7 * k + 2, 0, 0, TAU);
+    g.ellipse(this.runX + this.deadX, GROUND_Y + 4, 26 * k + 8, 7 * k + 2, 0, 0, TAU);
     g.fill();
     g.restore();
 
@@ -2432,7 +3356,7 @@ export class RunnerGame extends BaseGame {
 
     g.save();
     g.globalAlpha = fade;
-    g.translate(RUN_X + this.deadX, this.feetY);
+    g.translate(this.runX + this.deadX, this.feetY);
     if (dead) g.rotate(this.tumble);
     g.scale(sx, sy);
 
@@ -2440,13 +3364,23 @@ export class RunnerGame extends BaseGame {
     // look like it grazed something it did not, never the other way round.
     const hw = slide ? 23 : 20;
 
-    if (!slide) this.drawLegs(g, h, air > 1 || dead);
+    // The burger repaints the whole body, because a state that changes what
+    // every obstacle on the field means cannot be signalled with a detail. The
+    // last second blinks between the two palettes: the player is told the state
+    // is ending by the same channel that told them it started.
+    const blink = this.powerT > 0 && this.powerT <= BURGER_WARN
+      ? Math.sin(this.powerT * BURGER_BLINK * TAU) > 0
+      : false;
+    const powered = this.powerT > 0 && !blink;
+    const outline = powered ? BUN_LINE : ACCENT_DARK;
 
-    g.fillStyle = ACCENT;
+    if (!slide) this.drawLegs(g, h, air > 1 || dead, outline);
+
+    g.fillStyle = powered ? BUN_FILL : ACCENT;
     roundRect(g, -hw, -h, hw * 2, h, hw);
     g.fill();
-    g.strokeStyle = ACCENT_DARK;
-    g.lineWidth = 3.2;
+    g.strokeStyle = outline;
+    g.lineWidth = powered ? 4 : 3.2;
     g.stroke();
 
     // Gloss up-left, so the capsule is a solid object and not a flat sticker.
@@ -2476,7 +3410,7 @@ export class RunnerGame extends BaseGame {
     if (slide) {
       // Legs tucked out front while sliding, so the pose reads instantly at a
       // glance rather than being "the capsule, but shorter".
-      g.strokeStyle = ACCENT_DARK;
+      g.strokeStyle = outline;
       g.lineWidth = 8;
       g.lineCap = "round";
       g.beginPath();
@@ -2486,11 +3420,13 @@ export class RunnerGame extends BaseGame {
     }
     g.restore();
 
+    if (this.powerT > 0 && !dead) this.drawPowerRing(g, h);
+
     if (this.elapsed < OPENING_GRACE && !dead) {
       // Spell the grace window out; an invulnerable second the player cannot
       // see is an invulnerable second they will not trust.
       const t = this.elapsed / OPENING_GRACE;
-      text(g, "SAFE", RUN_X, GROUND_Y - STAND_H - 26, {
+      text(g, "SAFE", this.runX, GROUND_Y - STAND_H - 26, {
         size: 11,
         color: GREEN,
         alpha: 0.9 * (1 - t),
@@ -2500,7 +3436,7 @@ export class RunnerGame extends BaseGame {
 
     if (this.popTimer > 0 && !dead) {
       const t = this.popTimer / 0.75;
-      text(g, this.popText, RUN_X, this.feetY - h - 22 - (1 - t) * 26, {
+      text(g, this.popText, this.runX, this.feetY - h - 22 - (1 - t) * 26, {
         size: 17,
         color: ACCENT,
         alpha: Math.min(1, t * 1.6),
@@ -2509,7 +3445,7 @@ export class RunnerGame extends BaseGame {
       });
     }
     if (this.combo >= 3 && this.status === "playing") {
-      text(g, this.comboLabel, RUN_X, this.feetY - h - 46, {
+      text(g, this.comboLabel, this.runX, this.feetY - h - 46, {
         size: 14,
         color: ACCENT_DARK,
         alpha: Math.min(1, this.comboTimer / COMBO_DECAY) * 0.95,
@@ -2517,10 +3453,55 @@ export class RunnerGame extends BaseGame {
     }
   }
 
-  /** Two capsule legs cycling off distance travelled, tucked while airborne. */
-  private drawLegs(g: CanvasRenderingContext2D, bodyH: number, airborne: boolean): void {
+  /**
+   * The burger clock, drawn on the runner itself: a draining ring with the
+   * whole seconds inside it.
+   *
+   * There is a readout in the corner too, but the eye is on the body during a
+   * burger — that is the whole point of the state — so the number the player is
+   * actually deciding against has to be there as well. Under a second it turns
+   * red-pink and flashes with the body.
+   */
+  private drawPowerRing(g: CanvasRenderingContext2D, bodyH: number): void {
+    const k = this.powerT / BURGER_TIME;
+    const last = this.powerT <= BURGER_WARN;
+    const flash = last ? Math.sin(this.powerT * BURGER_BLINK * TAU) > 0 : false;
+    const y = this.feetY - bodyH - 40;
+    const col = last ? BEAM_LINE : BUN_LINE;
+
     g.save();
-    g.strokeStyle = ACCENT_DARK;
+    g.globalAlpha = this.runFade() * (last && flash ? 0.45 : 1);
+    g.fillStyle = C_WHITE;
+    g.beginPath();
+    g.arc(this.runX, y, 17, 0, TAU);
+    g.fill();
+    g.strokeStyle = C_GAUGE_TRACK;
+    g.lineWidth = 4;
+    g.stroke();
+    g.strokeStyle = col;
+    g.lineWidth = 4;
+    g.lineCap = "round";
+    g.beginPath();
+    g.arc(this.runX, y, 17, -Math.PI / 2, -Math.PI / 2 + TAU * k);
+    g.stroke();
+    g.restore();
+
+    text(g, this.powerDigit, this.runX, y + 1, {
+      size: 16,
+      color: col,
+      alpha: this.runFade() * (last && flash ? 0.5 : 1),
+    });
+  }
+
+  /** Two capsule legs cycling off distance travelled, tucked while airborne. */
+  private drawLegs(
+    g: CanvasRenderingContext2D,
+    bodyH: number,
+    airborne: boolean,
+    color: string
+  ): void {
+    g.save();
+    g.strokeStyle = color;
     g.lineWidth = 9;
     g.lineCap = "round";
     const hipY = -bodyH * 0.34;
@@ -2552,9 +3533,15 @@ export class RunnerGame extends BaseGame {
       g.save();
       g.globalAlpha = (0.4 + 0.4 * pulse) * fade;
       g.strokeStyle =
-        o.kind === KIND_PIT ? PIT_RIM_LINE : o.kind === KIND_CEIL ? CEIL_LINE : BEAM_LINE;
+        o.kind === KIND_PIT
+          ? PIT_RIM_LINE
+          : o.kind === KIND_CEIL
+            ? CEIL_LINE
+            : o.kind === KIND_WALL
+              ? WALL_LINE
+              : BEAM_LINE;
       g.lineWidth = 4;
-      if (o.kind === KIND_BLOCK) {
+      if (o.kind === KIND_BLOCK || o.kind === KIND_WALL) {
         y = GROUND_Y - o.h - 32;
         roundRect(g, o.x - 6, GROUND_Y - o.h - 6, o.w + 12, o.h + 12, 14);
       } else if (o.kind === KIND_BEAM) {
@@ -2600,6 +3587,8 @@ export class RunnerGame extends BaseGame {
 
   protected onRenderOverlay(g: CanvasRenderingContext2D): void {
     this.drawGauge(g);
+    this.drawDashGauge(g);
+    this.drawPowerBar(g);
     if (this.bannerT <= 0) return;
     const k = this.bannerT / BANNER_TIME;
     // Snap in, hold, drift out. onUpdate stops at death, so bannerT freezes —
@@ -2674,5 +3663,112 @@ export class RunnerGame extends BaseGame {
       alpha: alpha * 0.8,
       letterSpacing: "3px",
     });
+  }
+
+  /**
+   * Dash readiness, mirrored opposite the multiplier.
+   *
+   * The cooldown is the one number the spawner is written around — no two
+   * barricades are ever placed closer than it — so the player has to be able to
+   * see it refill and trust that the wall on screen is answerable. Hidden until
+   * barricades exist, because a gauge for a verb with nothing to use it on is
+   * just clutter.
+   */
+  private drawDashGauge(g: CanvasRenderingContext2D): void {
+    if (this.curStage < STAGE_WALLS && this.dashCool <= 0) return;
+    const k = clamp(1 - this.dashCool / DASH_RECOVER, 0, 1);
+    const ready = k >= 1;
+    const alpha = this.runFade();
+    if (alpha <= 0.01) return;
+    g.save();
+    g.globalAlpha = alpha;
+    g.fillStyle = C_GAUGE_TRACK;
+    roundRect(g, DASH_GAUGE_X, GAUGE_Y, DASH_GAUGE_W, GAUGE_H, GAUGE_H / 2);
+    g.fill();
+    g.fillStyle = ready ? ACCENT : ACCENT_DARK;
+    g.globalAlpha = alpha * (ready ? 1 : 0.55);
+    roundRect(g, DASH_GAUGE_X, GAUGE_Y, Math.max(GAUGE_H, DASH_GAUGE_W * k), GAUGE_H, GAUGE_H / 2);
+    g.fill();
+    g.restore();
+    text(g, ready ? "DASH READY" : "DASH", DASH_GAUGE_X, GAUGE_Y - 14, {
+      size: 12,
+      color: ready ? ACCENT_DARK : INK_DIM,
+      align: "left",
+      alpha: alpha * (ready ? 1 : 0.7),
+      letterSpacing: "3px",
+    });
+  }
+
+  /**
+   * The burger clock in the corner, in seconds to one decimal.
+   *
+   * The ring on the runner is the one the player reads mid-decision; this is
+   * the one they read between them. Both drain from the same number, and both
+   * flip to the warning colour for the final second — there is deliberately no
+   * way to be inside a burger and not be told how much of it is left.
+   */
+  private drawPowerBar(g: CanvasRenderingContext2D): void {
+    if (this.powerT <= 0) return;
+    const alpha = this.runFade();
+    if (alpha <= 0.01) return;
+    const k = this.powerT / BURGER_TIME;
+    const last = this.powerT <= BURGER_WARN;
+    const flash = last ? Math.sin(this.powerT * BURGER_BLINK * TAU) > 0 : false;
+    const col = last ? BEAM_LINE : BUN_LINE;
+
+    g.save();
+    g.globalAlpha = alpha * (last && flash ? 0.5 : 1);
+    g.fillStyle = C_WHITE;
+    roundRect(g, POWER_X, POWER_Y, POWER_W, POWER_H, POWER_H / 2);
+    g.fill();
+    g.strokeStyle = col;
+    g.lineWidth = 2.5;
+    g.stroke();
+    // The drain itself, inset inside the pill.
+    g.fillStyle = C_GAUGE_TRACK;
+    roundRect(g, POWER_X + 62, POWER_Y + 26, POWER_W - 78, 7, 3.5);
+    g.fill();
+    g.fillStyle = col;
+    roundRect(g, POWER_X + 62, POWER_Y + 26, Math.max(7, (POWER_W - 78) * k), 7, 3.5);
+    g.fill();
+    g.restore();
+
+    text(g, "BURGER", POWER_X + 62, POWER_Y + 15, {
+      size: 10,
+      color: INK_DIM,
+      align: "left",
+      alpha: alpha * 0.85,
+      letterSpacing: "3px",
+    });
+    text(g, this.powerLabel, POWER_X + POWER_W - 18, POWER_Y + 15, {
+      size: 15,
+      color: col,
+      align: "right",
+      alpha: alpha * (last && flash ? 0.5 : 1),
+    });
+    // A little burger sitting in the pill, so the state is named by the object
+    // that caused it rather than only by a word.
+    g.save();
+    g.globalAlpha = alpha * (last && flash ? 0.5 : 1);
+    const ix = POWER_X + 34;
+    const iy = POWER_Y + POWER_H / 2;
+    g.strokeStyle = BUN_LINE;
+    g.lineWidth = 2;
+    g.fillStyle = BUN_FILL;
+    g.beginPath();
+    g.ellipse(ix, iy - 4, 13, 9, 0, Math.PI, TAU);
+    g.fill();
+    g.stroke();
+    g.fillStyle = LETTUCE_FILL;
+    roundRect(g, ix - 13, iy - 4, 26, 5, 2);
+    g.fill();
+    g.fillStyle = PATTY_FILL;
+    roundRect(g, ix - 12, iy + 1, 24, 5, 2);
+    g.fill();
+    g.fillStyle = BUN_FILL;
+    roundRect(g, ix - 13, iy + 6, 26, 6, 3);
+    g.fill();
+    g.stroke();
+    g.restore();
   }
 }

@@ -59,9 +59,9 @@ export const GAME_LIST: readonly GameMeta[] = [
     titleKo: "점프 러너",
     description: "끝없이 달린다. 뛰어넘고, 미끄러지고, 부딪히면 끝.",
     controls: "장애물을 뛰어넘고 미끄러져 통과 · 아슬아슬할수록 보너스",
-    keys: "SPACE 점프 (길게 누르면 높이) · ↓ 슬라이드",
+    keys: "SPACE 점프 (길게 누르면 높이) · ↓ 슬라이드 · → 대시",
     accent: "#a77bff",
-    touch: "jump-slide",
+    touch: "jump-slide-dash",
   },
   {
     id: "aim",
