@@ -43,13 +43,31 @@ const SITE_URL =
     ? "https://" + process.env.VERCEL_PROJECT_PRODUCTION_URL
     : "https://game.ohsedu.site");
 
+/**
+ * Served straight out of public/ rather than through the app/opengraph-image
+ * file convention.
+ *
+ * That convention emits a cache-busted URL — /opengraph-image.png with an
+ * ?opengraph-image.<hash>.png query — and KakaoTalk's scraper does not reliably
+ * fetch it, which is why a shared link showed the title and description but no
+ * picture. A plain path with no query is understood by everything.
+ *
+ * The file is also a 63KB JPEG rather than a 770KB PNG: scrapers give up on
+ * slow images well before any documented size limit.
+ */
+const OG_IMAGE = {
+  url: "/og.jpg",
+  width: 1200,
+  height: 630,
+  type: "image/jpeg",
+  alt: "게임532 — 총알 피하고, 똥 피하고, 방향을 사수해라!",
+};
+
 export const metadata: Metadata = {
   metadataBase: new URL(SITE_URL),
   title: TITLE,
   description: DESCRIPTION,
   applicationName: TITLE,
-  // app/opengraph-image.png and app/twitter-image.png are picked up by file
-  // convention, so the image URLs are not repeated here.
   openGraph: {
     type: "website",
     siteName: TITLE,
@@ -57,11 +75,13 @@ export const metadata: Metadata = {
     description: DESCRIPTION,
     url: SITE_URL,
     locale: "ko_KR",
+    images: [OG_IMAGE],
   },
   twitter: {
     card: "summary_large_image",
     title: TITLE,
     description: DESCRIPTION,
+    images: [OG_IMAGE],
   },
 };
 
