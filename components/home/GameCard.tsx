@@ -56,6 +56,59 @@ function CardArt({ id, accent }: { id: GameMeta["id"]; accent: string }) {
     );
   }
 
+  if (id === "stack") {
+    return (
+      <svg viewBox="0 0 140 84" className="h-full w-full" aria-hidden="true">
+        {/* Tower narrowing as it rises, with the live block sliding above it. */}
+        {([
+          [30, 70, 80, "#4ecb71"],
+          [36, 58, 68, "#4f8cff"],
+          [44, 46, 52, "#a77bff"],
+          [50, 34, 40, "#ffb443"],
+        ] as const).map(([x, y, w, c], i) => (
+          <rect key={i} x={x} y={y} width={w} height={11} rx={4} fill={c} stroke="rgba(24,28,45,0.16)" strokeWidth={1.5} />
+        ))}
+        <rect x={82} y={16} width={34} height={11} rx={4} fill="#ff6b8a" stroke="rgba(24,28,45,0.16)" strokeWidth={1.5} />
+        <path d="M74 21 h-14 M62 17 l-5 4 l5 4" stroke={accent} strokeWidth={2} fill="none" strokeLinecap="round" strokeLinejoin="round" />
+      </svg>
+    );
+  }
+
+  if (id === "runner") {
+    return (
+      <svg viewBox="0 0 140 84" className="h-full w-full" aria-hidden="true">
+        <line x1={8} y1={66} x2={132} y2={66} stroke={accent} strokeWidth={2.5} opacity={0.4} strokeLinecap="round" />
+        {/* Mid-air, arcing over the block ahead. */}
+        <path d="M30 58 q14 -26 30 -4" stroke={accent} strokeWidth={2} fill="none" strokeDasharray="3 4" opacity={0.5} />
+        <ellipse cx={46} cy={64} rx={11} ry={3} fill="rgba(24,28,45,0.10)" />
+        <rect x={38} y={26} width={19} height={24} rx={9.5} fill="#ffffff" stroke={accent} strokeWidth={3} />
+        <circle cx={44} cy={35} r={2} fill="#22252d" />
+        <circle cx={52} cy={35} r={2} fill="#22252d" />
+        <path d="M41 51 l-4 7 M54 51 l4 7" stroke={accent} strokeWidth={3} strokeLinecap="round" />
+        <rect x={84} y={50} width={16} height={16} rx={4} fill="#ff6b8a" stroke="rgba(24,28,45,0.16)" strokeWidth={1.5} />
+        <rect x={110} y={30} width={20} height={9} rx={4} fill="#ffb443" stroke="rgba(24,28,45,0.16)" strokeWidth={1.5} />
+      </svg>
+    );
+  }
+
+  if (id === "aim") {
+    return (
+      <svg viewBox="0 0 140 84" className="h-full w-full" aria-hidden="true">
+        {/* Two targets mid-countdown plus the crosshair on the near one. */}
+        <g opacity={0.45}>
+          <circle cx={34} cy={26} r={13} fill="none" stroke={accent} strokeWidth={2.5} />
+          <circle cx={34} cy={26} r={6} fill={accent} />
+        </g>
+        <circle cx={104} cy={58} r={10} fill="none" stroke="#a77bff" strokeWidth={2.5} opacity={0.5} />
+        <circle cx={104} cy={58} r={4} fill="#a77bff" opacity={0.6} />
+        <circle cx={70} cy={44} r={20} fill="none" stroke={accent} strokeWidth={2.5} strokeDasharray="6 5" />
+        <circle cx={70} cy={44} r={13} fill="#ffffff" stroke={accent} strokeWidth={3} />
+        <circle cx={70} cy={44} r={5.5} fill={accent} />
+        <path d="M70 20 v9 M70 59 v9 M46 44 h9 M85 44 h9" stroke="#22252d" strokeWidth={2.5} strokeLinecap="round" opacity={0.75} />
+      </svg>
+    );
+  }
+
   return (
     <svg viewBox="0 0 140 84" className="h-full w-full" aria-hidden="true">
       <circle cx={70} cy={44} r={26} fill="none" stroke={accent} strokeWidth={2.5} strokeDasharray="5 6" opacity={0.45} />

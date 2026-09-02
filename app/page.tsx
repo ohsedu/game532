@@ -7,7 +7,7 @@ export default function HomePage() {
     <main className="mx-auto flex w-full max-w-6xl flex-1 flex-col px-6 pt-8 pb-16 sm:pt-12 sm:pb-24">
       <header className="animate-rise text-center">
         <span className="pill inline-block bg-primary-soft px-5 py-2 text-sm text-primary">
-          방향키만으로 즐기는 미니게임
+          간단하게 즐기는 미니게임
         </span>
         <h1 className="mt-6 text-7xl text-ink sm:text-8xl">
           <span className="text-primary">game532</span>
@@ -31,7 +31,7 @@ export default function HomePage() {
           🏆 랭킹 보기
         </Link>
         <p className="text-xs text-ink-faint">
-          ↑ ↓ ← → 만 사용해요 · ESC 로 일시정지
+          키보드도, 마우스도, 터치도 · ESC 로 일시정지
         </p>
       </footer>
     </main>

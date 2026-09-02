@@ -35,8 +35,10 @@ export interface GameMeta {
   titleKo: string;
   /** One-line hook */
   description: string;
-  /** How to play, one line */
+  /** What the game is about, one line. Shown on the card and the ready screen. */
   controls: string;
+  /** Keyboard controls only, for the hint under the board on desktop. */
+  keys: string;
   /** Tailwind-friendly accent hex, used for glow/borders */
   accent: string;
   /** How touch input reaches the game on a phone. */

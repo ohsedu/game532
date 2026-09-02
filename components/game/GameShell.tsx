@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { GameMeta } from "@/types/game";
+import type { GameMeta, TouchMode } from "@/types/game";
 import type { HudStat } from "@/games/core/BaseGame";
 import type { AudioManager } from "@/games/core/AudioManager";
 import type { InputManager } from "@/games/core/InputManager";
@@ -20,6 +20,14 @@ import { PORTRAIT_PHONE, useMediaQuery } from "@/lib/useMediaQuery";
 type Phase = "ready" | "playing" | "over";
 
 const EMPTY_STATS: HudStat[] = [];
+
+/** Phone-side control hint, keyed by how the game takes touch input. */
+const TOUCH_HINT: Record<TouchMode, string> = {
+  joystick: "화면을 끌어서 이동 · BOOST 로 가속",
+  sector: "적이 오는 쪽 화면을 탭",
+  action: "TAP 버튼으로 조작",
+  pointer: "타겟을 탭",
+};
 
 /**
  * Board width, capped by the height that is actually available.
@@ -297,13 +305,10 @@ export default function GameShell({ meta }: { meta: GameMeta }) {
         style={{ maxWidth: BOARD_WIDTH }}
       >
         <span className="hidden sm:inline">
-          ↑ ↓ ← → 로 조작 · <span className="text-ink-dim">SPACE</span> 부스터 ·{" "}
-          <span className="text-ink-dim">ESC</span> 로 일시정지
+          {meta.keys} · <span className="text-ink-dim">ESC</span> 로 일시정지
         </span>
         <span className="sm:hidden">
-          {meta.touch === "joystick"
-            ? "화면을 끌어서 움직이고 BOOST 로 가속하세요"
-            : "적이 오는 쪽 화면을 탭하세요"}
+          {TOUCH_HINT[meta.touch]}
           {" · 우측 상단 "}
           <span className="text-ink-dim">⏸</span>
           {" 로 일시정지"}
