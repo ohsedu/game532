@@ -1,0 +1,40 @@
+import type { Metadata } from "next";
+import Link from "next/link";
+import { isGameId, type GameId } from "@/types/game";
+import { GAME_LIST } from "@/games/registry";
+import RankingTable from "@/components/ranking/RankingTable";
+
+export const metadata: Metadata = {
+  title: "RANKING — ARCADE",
+  description: "게임별 상위 100명의 기록.",
+};
+
+export default async function RankingPage({ searchParams }: PageProps<"/ranking">) {
+  const sp = await searchParams;
+  const raw = sp.game;
+  const requested = Array.isArray(raw) ? raw[0] : raw;
+  const initialGameId: GameId = isGameId(requested) ? requested : GAME_LIST[0].id;
+
+  return (
+    <main className="mx-auto flex w-full max-w-3xl flex-1 flex-col px-6 py-12 sm:py-16">
+      <nav className="mb-8 text-xs">
+        <Link href="/" className="text-ink-faint transition-colors hover:text-ink">
+          ← ARCADE
+        </Link>
+      </nav>
+
+      <header className="animate-rise">
+        <h1 className="text-4xl font-black tracking-tight text-ink sm:text-5xl">
+          🏆 RANKING
+        </h1>
+        <p className="mt-3 text-sm text-ink-dim">
+          게임별 상위 100명 · 동점이면 먼저 기록한 사람이 위로 올라갑니다.
+        </p>
+      </header>
+
+      <section className="animate-rise mt-9" style={{ animationDelay: "70ms" }}>
+        <RankingTable games={GAME_LIST} initialGameId={initialGameId} />
+      </section>
+    </main>
+  );
+}
