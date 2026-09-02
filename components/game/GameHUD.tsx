@@ -32,7 +32,7 @@ function GameHUD({
   const beatingBest = best > 0 && score > best;
 
   return (
-    <div className="pointer-events-none absolute inset-x-0 top-0 flex items-start justify-between gap-3 p-4">
+    <div className="hud-inner pointer-events-none flex items-start justify-between gap-2 p-4">
       <div className="rounded-2xl bg-white/80 px-4 py-2.5 shadow-sm backdrop-blur-sm">
         <p className="text-[10px] leading-none text-ink-faint">SCORE</p>
         <p

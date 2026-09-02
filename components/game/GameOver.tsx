@@ -92,18 +92,18 @@ export default function GameOver({
   const submitted = state.kind === "done";
 
   return (
-    <div className="absolute inset-0 z-10 flex items-center justify-center overflow-y-auto bg-white/75 py-6 backdrop-blur-[3px]">
-      <div className="animate-pop card w-full max-w-sm px-7 py-8 text-center">
+    <div className="absolute inset-0 z-20 flex overflow-y-auto overscroll-contain bg-white/75 p-4 backdrop-blur-[3px]">
+      <div className="panel-compact animate-pop card m-auto w-full max-w-sm px-7 py-7 text-center">
         {isNewRecord ? (
           <>
-            <div className="animate-bob text-4xl" aria-hidden="true">
+            <div className="panel-emoji animate-bob text-4xl" aria-hidden="true">
               🎉
             </div>
             <p className="animate-shimmer mt-2 text-xl">신기록 달성!</p>
           </>
         ) : (
           <>
-            <div className="text-4xl" aria-hidden="true">
+            <div className="panel-emoji text-4xl" aria-hidden="true">
               😵
             </div>
             <p className="mt-2 text-xl text-ink">게임 오버</p>
@@ -111,7 +111,7 @@ export default function GameOver({
         )}
 
         <p className="mt-6 text-[11px] text-ink-faint">SCORE</p>
-        <p className="num text-5xl font-semibold leading-none" style={{ color: accent }}>
+        <p className="panel-score num text-5xl font-semibold leading-none" style={{ color: accent }}>
           {formatScore(score)}
         </p>
         <p className="num mt-3 text-xs text-ink-faint">BEST {formatScore(best)}</p>
@@ -176,7 +176,7 @@ export default function GameOver({
           </div>
         )}
 
-        <div className="mt-7 grid gap-2">
+        <div className="panel-actions mt-6 grid gap-2">
           <button
             type="button"
             onClick={onRestart}

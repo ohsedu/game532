@@ -19,20 +19,20 @@ export interface GameCanvasProps {
   onStats: (stats: HudStat[]) => void;
   onGameOver: (finalScore: number, elapsedSeconds: number) => void;
   audioRef?: (audio: AudioManager) => void;
+  /** Handed the input manager so the touch layer can drive it. */
+  inputRef?: (input: InputManager) => void;
 }
-
-/** Drag distance, in CSS px, before an axis engages. */
-const JOY_DEADZONE = 14;
-/** Past this the origin follows the finger, so long drags keep steering. */
-const JOY_RADIUS = 58;
 
 /**
  * Hosts one game instance on a canvas.
  *
  * The React tree never re-renders during play: the game publishes score and HUD
- * changes through refs held by the parent, the loop lives in a ref, and the
- * touch stick is positioned by writing to the DOM node directly rather than
- * through state.
+ * changes through refs held by the parent, and the loop lives in a ref.
+ *
+ * Drag-to-steer is NOT handled here — TouchLayer owns it, because a drag has to
+ * be allowed to start anywhere on the game screen, not only over the canvas.
+ * What stays here is the facing game's tap-a-side input, which is only
+ * meaningful in board coordinates.
  */
 export default function GameCanvas({
   gameId,
@@ -43,10 +43,9 @@ export default function GameCanvas({
   onStats,
   onGameOver,
   audioRef,
+  inputRef: bindInput,
 }: GameCanvasProps) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
-  const stickRef = useRef<HTMLDivElement | null>(null);
-  const knobRef = useRef<HTMLDivElement | null>(null);
   const gameRef = useRef<BaseGame | null>(null);
   const inputRef = useRef<InputManager | null>(null);
   const pausedRef = useRef(paused);
@@ -102,6 +101,7 @@ export default function GameCanvas({
     input.attach();
     inputRef.current = input;
     audioRef?.(audio);
+    bindInput?.(input);
 
     const game = createGame(gameId, {
       input,
@@ -127,37 +127,7 @@ export default function GameCanvas({
     loop.start();
     game.start();
 
-    // --- Touch controls ------------------------------------------------------
-    // Mouse is deliberately excluded: the games are keyboard-first by design,
-    // and a stray click-drag on desktop should never steer the player.
-    let pointerId: number | null = null;
-    let originX = 0;
-    let originY = 0;
-
-    const showStick = (clientX: number, clientY: number) => {
-      const stick = stickRef.current;
-      if (!stick) return;
-      const rect = canvas.getBoundingClientRect();
-      stick.style.left = clientX - rect.left + "px";
-      stick.style.top = clientY - rect.top + "px";
-      stick.style.opacity = "1";
-      if (knobRef.current) knobRef.current.style.transform = "translate(-50%, -50%)";
-    };
-
-    const moveKnob = (dx: number, dy: number) => {
-      const knob = knobRef.current;
-      if (!knob) return;
-      const d = Math.hypot(dx, dy);
-      const k = d > JOY_RADIUS ? JOY_RADIUS / d : 1;
-      knob.style.transform =
-        "translate(calc(-50% + " + dx * k + "px), calc(-50% + " + dy * k + "px))";
-    };
-
-    const hideStick = () => {
-      if (stickRef.current) stickRef.current.style.opacity = "0";
-    };
-
-    /** Tap position relative to the play area center -> nearest arrow. */
+    /** Tap position relative to the play area centre -> nearest arrow. */
     const sectorKey = (clientX: number, clientY: number): ArrowKey => {
       const rect = canvas.getBoundingClientRect();
       const dx = clientX - (rect.left + rect.width / 2);
@@ -170,58 +140,18 @@ export default function GameCanvas({
       return sy >= 0 ? "ArrowDown" : "ArrowUp";
     };
 
+    // Mouse is deliberately excluded: the games are keyboard-first by design,
+    // and a stray click should never change the player's facing.
     const onPointerDown = (e: PointerEvent) => {
       if (e.pointerType === "mouse") return;
       if (pausedRef.current) return;
+      if (touchRef.current !== "sector") return;
       e.preventDefault();
       audio.unlock();
-
-      if (touchRef.current === "sector") {
-        input.virtualTap(sectorKey(e.clientX, e.clientY));
-        return;
-      }
-
-      pointerId = e.pointerId;
-      originX = e.clientX;
-      originY = e.clientY;
-      canvas.setPointerCapture(e.pointerId);
-      showStick(e.clientX, e.clientY);
-    };
-
-    const onPointerMove = (e: PointerEvent) => {
-      if (pointerId !== e.pointerId || touchRef.current !== "joystick") return;
-      e.preventDefault();
-      let dx = e.clientX - originX;
-      let dy = e.clientY - originY;
-
-      // Origin follows once the finger passes the ring, so the stick never
-      // runs out of travel during a long swipe.
-      const d = Math.hypot(dx, dy);
-      if (d > JOY_RADIUS) {
-        const pull = (d - JOY_RADIUS) / d;
-        originX += dx * pull;
-        originY += dy * pull;
-        dx = e.clientX - originX;
-        dy = e.clientY - originY;
-        showStick(originX, originY);
-      }
-
-      input.setVirtualVector(dx, dy, JOY_DEADZONE);
-      moveKnob(dx, dy);
-    };
-
-    const onPointerEnd = (e: PointerEvent) => {
-      if (pointerId !== e.pointerId) return;
-      pointerId = null;
-      input.clearVirtual();
-      hideStick();
-      if (canvas.hasPointerCapture(e.pointerId)) canvas.releasePointerCapture(e.pointerId);
+      input.virtualTap(sectorKey(e.clientX, e.clientY));
     };
 
     canvas.addEventListener("pointerdown", onPointerDown);
-    canvas.addEventListener("pointermove", onPointerMove);
-    canvas.addEventListener("pointerup", onPointerEnd);
-    canvas.addEventListener("pointercancel", onPointerEnd);
 
     const ro = new ResizeObserver(resize);
     ro.observe(canvas);
@@ -236,9 +166,6 @@ export default function GameCanvas({
     return () => {
       document.removeEventListener("visibilitychange", onVisibility);
       canvas.removeEventListener("pointerdown", onPointerDown);
-      canvas.removeEventListener("pointermove", onPointerMove);
-      canvas.removeEventListener("pointerup", onPointerEnd);
-      canvas.removeEventListener("pointercancel", onPointerEnd);
       ro.disconnect();
       loop.stop();
       input.detach();
@@ -247,8 +174,8 @@ export default function GameCanvas({
       gameRef.current = null;
       inputRef.current = null;
     };
-    // audioRef is a stable setter from the parent; excluded deliberately so a
-    // new inline function does not rebuild the game.
+    // audioRef/inputRef are stable setters from the parent; excluded so a new
+    // inline function does not rebuild the game.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [gameId, resize]);
 
@@ -256,7 +183,6 @@ export default function GameCanvas({
   useEffect(() => {
     if (!paused) return;
     inputRef.current?.clearVirtual();
-    if (stickRef.current) stickRef.current.style.opacity = "0";
   }, [paused]);
 
   // Restart without rebuilding: reuse the instance, as the contract requires.
@@ -265,24 +191,10 @@ export default function GameCanvas({
   }, [runId]);
 
   return (
-    <>
-      <canvas
-        ref={canvasRef}
-        className="block h-full w-full touch-none select-none"
-        aria-label="게임 화면"
-      />
-      {touch === "joystick" ? (
-        <div
-          ref={stickRef}
-          aria-hidden="true"
-          className="pointer-events-none absolute h-[116px] w-[116px] -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-white/70 bg-black/10 opacity-0 transition-opacity duration-150"
-        >
-          <div
-            ref={knobRef}
-            className="absolute left-1/2 top-1/2 h-11 w-11 -translate-x-1/2 -translate-y-1/2 rounded-full bg-white/85 shadow-md"
-          />
-        </div>
-      ) : null}
-    </>
+    <canvas
+      ref={canvasRef}
+      className="block h-full w-full touch-none select-none"
+      aria-label="게임 화면"
+    />
   );
 }

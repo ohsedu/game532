@@ -221,7 +221,8 @@ a {
    the hint line and hand the board the entire screen. */
 @media (orientation: landscape) and (max-height: 560px) and (pointer: coarse) {
   :root {
-    --board-reserve: 0.75rem;
+    /* 0.75rem of padding plus the HUD bar that is now above the board. */
+    --board-reserve: 3.6rem;
   }
   .landscape-hide {
     display: none !important;
@@ -275,5 +276,87 @@ a {
   .animate-rotate-hint {
     animation: none;
     transform: rotate(-90deg);
+  }
+}
+
+/* --- Touch controls --------------------------------------------------------
+   Pinned to the viewport edges, not the board, so they can never sit over the
+   play area however wide the board gets. Only coarse pointers see them, which
+   keeps the desktop game keyboard-only. */
+.touch-only {
+  display: none;
+}
+
+@media (pointer: coarse) {
+  .touch-only {
+    display: flex;
+  }
+  .touch-only.grid {
+    display: grid;
+  }
+}
+
+:root {
+  --pad-inset: 0.6rem;
+  --stick-size: 5.5rem;
+  --knob-size: 2.5rem;
+  --dpad-btn: 2.5rem;
+}
+
+@media (orientation: landscape) and (max-height: 430px) and (pointer: coarse) {
+  :root {
+    --pad-inset: 0.4rem;
+    --stick-size: 4.5rem;
+    --knob-size: 2.1rem;
+    --dpad-btn: 2.1rem;
+  }
+}
+
+/* --- HUD placement ---------------------------------------------------------
+   On a roomy screen the HUD floats over the board corners. On a phone that is
+   a real hazard — hazards enter from the edges — so it becomes a slim bar
+   above the board instead, and the board reserve pays for it. */
+.hud-slot {
+  position: absolute;
+  inset-inline: 0;
+  top: 0;
+  z-index: 10;
+}
+
+@media (orientation: landscape) and (max-height: 560px) and (pointer: coarse) {
+  .hud-slot {
+    position: static;
+  }
+  .hud-inner {
+    padding: 0 0.15rem 0.3rem !important;
+  }
+}
+
+/* --- Game-over panel on a short landscape screen ---------------------------
+   The full-height panel does not fit in ~390px, so it drops the decoration
+   first and keeps the score, the nickname field and the actions. */
+@media (orientation: landscape) and (max-height: 560px) and (pointer: coarse) {
+  .panel-compact {
+    padding: 1rem 1.25rem !important;
+  }
+  .panel-emoji {
+    display: none !important;
+  }
+  .panel-score {
+    font-size: 2.5rem !important;
+  }
+  .panel-actions {
+    margin-top: 1rem !important;
+  }
+}
+
+/* --- Portrait phone --------------------------------------------------------
+   The board keeps a 1000x700 ratio, which is only ~270px tall on a phone - not
+   enough room for the rotate prompt. While the gate is up the ratio is dropped,
+   since nothing is being played behind it anyway. */
+@media (orientation: portrait) and (max-width: 767px) and (pointer: coarse) {
+  .board-card {
+    aspect-ratio: auto !important;
+    min-height: 58dvh;
   }
 }

@@ -36,9 +36,9 @@ export default function RotateGate({ accent }: { accent: string }) {
   }, []);
 
   return (
-    <div className="rotate-gate absolute inset-0 z-20 flex-col items-center justify-center gap-6 rounded-[inherit] bg-surface px-8 text-center">
+    <div className="rotate-gate absolute inset-0 z-30 flex-col items-center justify-center gap-7 overflow-y-auto rounded-[inherit] bg-surface px-8 py-12 text-center">
       <div
-        className="flex h-20 w-20 items-center justify-center rounded-3xl text-4xl"
+        className="flex h-20 w-20 shrink-0 items-center justify-center rounded-3xl text-4xl"
         style={{ backgroundColor: accent + "1f" }}
         aria-hidden="true"
       >

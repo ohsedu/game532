@@ -5,6 +5,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { GameMeta } from "@/types/game";
 import type { HudStat } from "@/games/core/BaseGame";
 import type { AudioManager } from "@/games/core/AudioManager";
+import type { InputManager } from "@/games/core/InputManager";
 import { commitBest } from "@/lib/localBest";
 import { useLocalBest } from "@/lib/useLocalBest";
 import { formatScore } from "@/lib/format";
@@ -13,6 +14,7 @@ import GameHUD from "./GameHUD";
 import GameOver from "./GameOver";
 import GamePause from "./GamePause";
 import RotateGate from "./RotateGate";
+import TouchLayer from "./TouchControls";
 import { PORTRAIT_PHONE, useMediaQuery } from "@/lib/useMediaQuery";
 
 type Phase = "ready" | "playing" | "over";
@@ -48,6 +50,7 @@ export default function GameShell({ meta }: { meta: GameMeta }) {
   // freezes behind the rotate prompt instead of the player dying blind.
   const portrait = useMediaQuery(PORTRAIT_PHONE);
 
+  const [input, setInput] = useState<InputManager | null>(null);
   const audioRef = useRef<AudioManager | null>(null);
   const overTimerRef = useRef(0);
   // True from the moment the player dies, before the panel appears. Stops ESC
@@ -142,6 +145,11 @@ export default function GameShell({ meta }: { meta: GameMeta }) {
     setMuted(audio.toggleMuted());
   }, []);
 
+  const bindInput = useCallback((next: InputManager) => setInput(next), []);
+
+  const padsDisabled = paused || portrait || phase === "over";
+  const surfaceRef = useRef<HTMLDivElement | null>(null);
+
   const bindAudio = useCallback((audio: AudioManager) => {
     audioRef.current = audio;
     setMuted(audio.isMuted);
@@ -170,8 +178,26 @@ export default function GameShell({ meta }: { meta: GameMeta }) {
         </Link>
       </nav>
 
+      <div ref={surfaceRef} className="relative mx-auto w-full">
+        {phase !== "ready" ? (
+          <div className="hud-slot">
+            <div className="mx-auto w-full" style={{ maxWidth: BOARD_WIDTH }}>
+              <GameHUD
+                score={score}
+                best={best}
+                stats={stats}
+                accent={meta.accent}
+                muted={muted}
+                paused={paused || portrait}
+                onToggleMute={toggleMute}
+                onTogglePause={paused ? resume : pause}
+              />
+            </div>
+          </div>
+        ) : null}
+
       <div
-        className="card relative mx-auto w-full overflow-hidden p-0"
+        className="board-card card relative mx-auto w-full overflow-hidden p-0"
         style={{ aspectRatio: "1000 / 700", maxWidth: BOARD_WIDTH }}
       >
         {phase === "ready" ? (
@@ -223,16 +249,7 @@ export default function GameShell({ meta }: { meta: GameMeta }) {
               onStats={setStats}
               onGameOver={handleGameOver}
               audioRef={bindAudio}
-            />
-            <GameHUD
-              score={score}
-              best={best}
-              stats={stats}
-              accent={meta.accent}
-              muted={muted}
-              paused={paused || portrait}
-              onToggleMute={toggleMute}
-              onTogglePause={paused ? resume : pause}
+              inputRef={bindInput}
             />
             {paused && phase === "playing" ? (
               <GamePause
@@ -258,6 +275,17 @@ export default function GameShell({ meta }: { meta: GameMeta }) {
         )}
 
         <RotateGate accent={meta.accent} />
+      </div>
+
+        {phase !== "ready" ? (
+          <TouchLayer
+            mode={meta.touch}
+            accent={meta.accent}
+            input={input}
+            disabled={padsDisabled}
+            surfaceRef={surfaceRef}
+          />
+        ) : null}
       </div>
 
       <p
