@@ -2,7 +2,12 @@ import { NextResponse } from "next/server";
 import { isGameId, type GameId } from "@/types/game";
 import { NICKNAME_MAX, SCORE_MAX, type RankingEntry } from "@/types/score";
 import { sanitizeNickname } from "@/lib/format";
-import { getServiceClient, isSupabaseConfigured } from "@/lib/supabase/server";
+import {
+  getReadClient,
+  getWriteClient,
+  isReadConfigured,
+  isWriteConfigured,
+} from "@/lib/supabase/server";
 import { clientIp, rateLimit } from "@/lib/rateLimit";
 
 export const runtime = "nodejs";
@@ -35,12 +40,12 @@ export async function GET(request: Request) {
 
   if (!isGameId(gameId)) return bad("gameId가 올바르지 않습니다.");
 
-  if (!isSupabaseConfigured()) {
+  if (!isReadConfigured()) {
     // Not an error: the site works without a database, just without rankings.
     return NextResponse.json({ configured: false, entries: [] as RankingEntry[] });
   }
 
-  const supabase = getServiceClient();
+  const supabase = getReadClient();
   if (!supabase) return bad("데이터베이스에 연결할 수 없습니다.", 503);
 
   const { data, error } = await supabase
@@ -112,14 +117,14 @@ export async function POST(request: Request) {
     return bad("점수가 허용 범위를 벗어났습니다.");
   }
 
-  if (!isSupabaseConfigured()) {
+  if (!isWriteConfigured()) {
     return NextResponse.json(
       { error: "랭킹 서버가 설정되지 않았습니다.", configured: false },
       { status: 503 }
     );
   }
 
-  const supabase = getServiceClient();
+  const supabase = getWriteClient();
   if (!supabase) return bad("데이터베이스에 연결할 수 없습니다.", 503);
 
   const { error } = await supabase

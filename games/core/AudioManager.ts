@@ -34,7 +34,7 @@ const SFX: Record<SfxName, SfxSpec> = {
   warn: { type: "square", freq: 160, freqEnd: 190, duration: 0.18, gain: 0.14 },
 };
 
-const MUTE_STORAGE_KEY = "arcade:muted";
+const MUTE_STORAGE_KEY = "game532:muted";
 
 /**
  * Synthesized sound effects over WebAudio. No asset files, no autoplay: the

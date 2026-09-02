@@ -12,10 +12,10 @@ export async function generateMetadata({
   params,
 }: PageProps<"/game/[gameId]">): Promise<Metadata> {
   const { gameId } = await params;
-  if (!isGameId(gameId)) return { title: "ARCADE" };
+  if (!isGameId(gameId)) return { title: "game532" };
   const meta = getGameMeta(gameId);
   return {
-    title: `${meta.titleKo} · ${meta.title} — ARCADE`,
+    title: `${meta.titleKo} · ${meta.title} — game532`,
     description: meta.description,
   };
 }

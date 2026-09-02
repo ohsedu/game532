@@ -26,4 +26,12 @@ export interface GameMeta {
   controls: string;
   /** Tailwind-friendly accent hex, used for glow/borders */
   accent: string;
+  /**
+   * How touch input maps onto the four arrows on mobile.
+   * - "joystick": drag anywhere to steer (movement games)
+   * - "sector": tap a side of the play area to face that way (reaction game)
+   */
+  touch: TouchMode;
 }
+
+export type TouchMode = "joystick" | "sector";

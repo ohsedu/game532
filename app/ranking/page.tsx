@@ -5,7 +5,7 @@ import { GAME_LIST } from "@/games/registry";
 import RankingTable from "@/components/ranking/RankingTable";
 
 export const metadata: Metadata = {
-  title: "RANKING — ARCADE",
+  title: "랭킹 — game532",
   description: "게임별 상위 100명의 기록.",
 };
 

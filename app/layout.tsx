@@ -5,11 +5,16 @@ import "./globals.css";
 
 // Jua is a rounded Korean display face - the "cute" in the whole design comes
 // from it, so it carries both Korean and Latin UI text.
+//
+// "latin" is the only subset next/font exposes for Korean families; the Hangul
+// glyphs arrive through the unicode-range split blocks Google returns anyway.
+// Verified after build by checking the emitted CSS for U+AC00 ranges.
 const jua = Jua({
   weight: "400",
   subsets: ["latin"],
   variable: "--font-jua",
   display: "swap",
+  fallback: ["Apple SD Gothic Neo", "Malgun Gothic", "sans-serif"],
 });
 
 // Fredoka's numerals are round and even-width, which keeps score columns tidy.
@@ -21,7 +26,7 @@ const fredoka = Fredoka({
 });
 
 export const metadata: Metadata = {
-  title: "ARCADE — 키보드 미니게임 3종",
+  title: "game532 — 키보드 미니게임 3종",
   description:
     "방향키만으로 즐기는 아케이드 미니게임 3종. 총알 피하기, 똥 피하기, 방향 사수. 점수를 기록하고 랭킹에 도전하세요.",
 };

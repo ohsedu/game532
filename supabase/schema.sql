@@ -1,4 +1,4 @@
--- ARCADE ranking schema.
+-- game532 ranking schema.
 -- Run this once in the Supabase SQL editor (Dashboard -> SQL Editor -> New query).
 
 create table if not exists public.scores (

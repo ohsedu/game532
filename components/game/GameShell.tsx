@@ -196,7 +196,8 @@ export default function GameShell({ meta }: { meta: GameMeta }) {
               시작하기
             </button>
             <p className="animate-blink mt-3 text-xs text-ink-faint">
-              아무 방향키나 눌러도 시작돼요
+              <span className="hidden sm:inline">아무 방향키나 눌러도 시작돼요</span>
+              <span className="sm:hidden">터치해서 시작하세요</span>
             </p>
             <p className="num mt-6 text-xs text-ink-faint">
               BEST {best > 0 ? formatScore(best) : "—"}
@@ -207,6 +208,7 @@ export default function GameShell({ meta }: { meta: GameMeta }) {
             <GameCanvas
               gameId={meta.id}
               runId={runId}
+              touch={meta.touch}
               paused={paused}
               onScore={setScore}
               onStats={setStats}
@@ -247,8 +249,18 @@ export default function GameShell({ meta }: { meta: GameMeta }) {
         )}
       </div>
 
-      <p className="mt-4 text-center text-xs text-ink-faint">
-        ↑ ↓ ← → 로 조작 · <span className="text-ink-dim">ESC</span> 로 일시정지
+      <p className="mt-4 text-center text-xs leading-relaxed text-ink-faint">
+        <span className="hidden sm:inline">
+          ↑ ↓ ← → 로 조작 · <span className="text-ink-dim">ESC</span> 로 일시정지
+        </span>
+        <span className="sm:hidden">
+          {meta.touch === "joystick"
+            ? "화면을 끌어서 움직이세요"
+            : "적이 오는 쪽 화면을 탭하세요"}
+          {" · 우측 상단 "}
+          <span className="text-ink-dim">⏸</span>
+          {" 로 일시정지"}
+        </span>
       </p>
     </main>
   );

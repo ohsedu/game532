@@ -10,7 +10,7 @@ export default function HomePage() {
           방향키만으로 즐기는 미니게임
         </span>
         <h1 className="mt-5 text-6xl text-ink sm:text-7xl">
-          <span className="text-primary">ARCADE</span>
+          <span className="text-primary">game532</span>
         </h1>
         <p className="mt-4 text-sm leading-relaxed text-ink-dim">
           어떤 게임을 플레이하시겠어요?

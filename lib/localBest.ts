@@ -1,7 +1,7 @@
 import { GAME_IDS, type GameId } from "@/types/game";
 
-const KEY = "arcade:best";
-const NICK_KEY = "arcade:nickname";
+const KEY = "game532:best";
+const NICK_KEY = "game532:nickname";
 
 type BestMap = Partial<Record<GameId, number>>;
 

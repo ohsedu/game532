@@ -1,6 +1,6 @@
 @import "tailwindcss";
 
-/* ARCADE theme: light, soft, rounded. Point color is indigo; the confetti
+/* game532 theme: light, soft, rounded. Point color is indigo; the confetti
    palette carries the playfulness. Deliberately light-only. */
 @theme {
   --color-bg: #f4f5f8;
@@ -13,9 +13,9 @@
   --color-ink-dim: #6d7280;
   --color-ink-faint: #a3a8b5;
 
-  --color-primary: #5b5fdd;
-  --color-primary-hover: #4b4fd0;
-  --color-primary-soft: #eef0ff;
+  --color-primary: #493add;
+  --color-primary-hover: #3b2ec2;
+  --color-primary-soft: #edeaff;
 
   /* Per-game accents, and the confetti palette they come from. */
   --color-dodge: #4f8cff;
@@ -62,7 +62,7 @@ body::after {
   z-index: -1;
   pointer-events: none;
   background:
-    radial-gradient(680px circle at 8% 4%, rgba(91, 95, 221, 0.07), transparent 62%),
+    radial-gradient(680px circle at 8% 4%, rgba(73, 58, 221, 0.08), transparent 62%),
     radial-gradient(560px circle at 94% 96%, rgba(255, 107, 138, 0.06), transparent 62%);
 }
 
