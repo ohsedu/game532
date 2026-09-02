@@ -57,8 +57,12 @@ const SITE_URL =
  */
 const OG_IMAGE = {
   url: "/og.jpg",
+  // Exactly 2:1. KakaoTalk and Twitter render at 2:1 and so crop nothing;
+  // Facebook and LinkedIn want 1.91:1 and trim ~27px off each side, which lands
+  // in the gradient margin rather than the artwork. At the old 1200x630 that
+  // trim came off the top and bottom instead, cutting into the illustration.
   width: 1200,
-  height: 630,
+  height: 600,
   type: "image/jpeg",
   alt: "게임532 — 총알 피하고, 똥 피하고, 방향을 사수해라!",
 };
