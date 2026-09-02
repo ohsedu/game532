@@ -251,6 +251,14 @@ const BLOCK_H_MAX = 88;
 const BLOCK_W_MIN = 38;
 const BLOCK_W_MAX = 78;
 /**
+ * Time the rise needs to lift the soles over the tallest block the game may
+ * commit. A block is cleared from above, so the press that answers one has to
+ * happen this far ahead of its leading edge — the reaction window is only what
+ * is left after paying it, which is why every gap that ends in a block books
+ * it separately instead of hoping REACT_MIN absorbs it.
+ */
+const BLOCK_RISE_MAX = riseTimeTo(BLOCK_H_MAX);
+/**
  * A block is only committed if the jump spends this fraction of its time-above
  * the block actually crossing it. 0.6 means the arc is nearly twice as long as
  * it needs to be — the margin is what lets a mistimed jump still clear.
@@ -440,6 +448,13 @@ function airTimeAbove(h: number): number {
   const riseAbove = T_RISE - tUp;
   const fallAbove = Math.sqrt((2 * (APEX - h)) / G_FALL);
   return riseAbove + fallAbove;
+}
+
+/** Seconds the rise takes to put the soles above `h`. Solves the same quadratic
+ *  as airTimeAbove, but for the near edge of the window rather than its width. */
+function riseTimeTo(h: number): number {
+  const disc = JUMP_V * JUMP_V - 2 * G_RISE * h;
+  return (JUMP_V - Math.sqrt(Math.max(0, disc))) / G_RISE;
 }
 
 /**
@@ -913,6 +928,16 @@ export class RunnerGame extends BaseGame {
     // land before they can answer the next thing at all. A beam or a roof is
     // run through on the floor, so neither owes that beat.
     if (prev === KIND_BLOCK || prev === KIND_PIT) floor += LAND_RECOVER;
+    // A pit is the one obstacle whose answer may legally be a whole coyote
+    // window late — off the lip the jump still registers, and the entire arc
+    // shifts with it. MIN_GAP_TIME measures from an obstacle's edge, so that
+    // shift is unpaid for unless it is booked here. pairGapTime has always
+    // charged it; the singles path silently did not, which put the tightest
+    // "pit then block" a frame or two inside the reaction floor it advertises.
+    if (prev === KIND_PIT) floor += COYOTE;
+    // A block has to be crossed from above, so the answer has to be in the air
+    // before the leading edge arrives, not merely decided by then.
+    if (next === KIND_BLOCK) floor += BLOCK_RISE_MAX;
     // A slide has to be started from the floor, so a beam needs its own beat
     // on top. This is what stops "pit then beam" from being unanswerable.
     if (next === KIND_BEAM) floor += SLIDE_SETUP;
@@ -958,7 +983,13 @@ export class RunnerGame extends BaseGame {
       GAP_DRIFT_PAD +
       LAND_RECOVER +
       PAIR_REACT +
-      (tail === KIND_BEAM ? SLIDE_SETUP : 0) -
+      (tail === KIND_BEAM ? SLIDE_SETUP : 0) +
+      // The second press is not the end of it when the tail is a block: the
+      // arc still has to be above it before its leading edge lands, and that
+      // rise is the difference between a tight pair and an uncrossable one.
+      // The slide-first branch already pays this as PAIR_JUMP_PREP; this one
+      // was reading the tail's kind for the beam beat and not for this.
+      (tail === KIND_BLOCK ? BLOCK_RISE_MAX : 0) -
       leadW / s;
     return Math.max(PAIR_MIN_TIME, t);
   }
@@ -1400,6 +1431,14 @@ export class RunnerGame extends BaseGame {
     this.airTime = 0;
     this.jumpCut = false;
     this.vy = -JUMP_V;
+    // Leaving under your own power un-commits the fall. The latch is armed by
+    // the first frame the soles dip below the floor line over a hole, which is
+    // one frame after running off the lip — so without this every coyote-time
+    // jump off a pit but the very first frame's was fatal: the leap read as
+    // clean, cleared the hole, and then died in mid-air over solid ground
+    // because the land test is gated on the latch. Coyote time exists to make
+    // exactly that press work.
+    this.pitFall = -1;
     // A duck books its slide for the next landing. Jumping instead retracts
     // that request: off a pit lip the coyote window lets a duck and a jump both
     // land inside the same airborne stretch, and the landing should not then
