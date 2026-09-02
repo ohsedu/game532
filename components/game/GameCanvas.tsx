@@ -4,7 +4,7 @@ import { useCallback, useEffect, useRef } from "react";
 import { GAME_HEIGHT, GAME_WIDTH, type GameId, type TouchMode } from "@/types/game";
 import type { BaseGame, HudStat } from "@/games/core/BaseGame";
 import { AudioManager } from "@/games/core/AudioManager";
-import { InputManager, type ArrowKey } from "@/games/core/InputManager";
+import { InputManager } from "@/games/core/InputManager";
 import { GameLoop } from "@/games/core/GameLoop";
 import { createGame } from "@/games/registry";
 
@@ -128,17 +128,29 @@ export default function GameCanvas({
     loop.start();
     game.start();
 
-    /** Tap position relative to the play area centre -> nearest arrow. */
-    const sectorKey = (clientX: number, clientY: number): ArrowKey => {
+    /**
+     * Tap position relative to the play area centre -> one of eight octants.
+     *
+     * A diagonal is delivered as two arrows tapped on the same frame, which is
+     * exactly what holding two keys looks like to a game, so nothing downstream
+     * has to know touch exists.
+     */
+    const sectorTap = (clientX: number, clientY: number): void => {
       const rect = canvas.getBoundingClientRect();
       const dx = clientX - (rect.left + rect.width / 2);
       const dy = clientY - (rect.top + rect.height / 2);
-      // Scale to the logical space so the diagonals split the 1000x700 arena
+      // Scale to the logical space so the octants split the 1000x700 arena
       // evenly rather than the letterboxed CSS box.
       const sx = dx * (GAME_WIDTH / Math.max(1, rect.width));
       const sy = dy * (GAME_HEIGHT / Math.max(1, rect.height));
-      if (Math.abs(sx) >= Math.abs(sy)) return sx >= 0 ? "ArrowRight" : "ArrowLeft";
-      return sy >= 0 ? "ArrowDown" : "ArrowUp";
+      const ax = Math.abs(sx);
+      const ay = Math.abs(sy);
+      if (ax < 1 && ay < 1) return;
+      // An axis counts only if it is at least ~41% of the dominant one; that is
+      // tan(22.5 degrees), i.e. the true octant boundary.
+      const minor = Math.max(ax, ay) * 0.4142;
+      if (ax >= minor) input.virtualTap(sx >= 0 ? "ArrowRight" : "ArrowLeft");
+      if (ay >= minor) input.virtualTap(sy >= 0 ? "ArrowDown" : "ArrowUp");
     };
 
     /** Client coords -> the fixed 1000x700 logical space. */
@@ -173,7 +185,7 @@ export default function GameCanvas({
       if (mode !== "sector") return;
       e.preventDefault();
       audio.unlock();
-      input.virtualTap(sectorKey(e.clientX, e.clientY));
+      sectorTap(e.clientX, e.clientY);
     };
 
     const onPointerMove = (e: PointerEvent) => {

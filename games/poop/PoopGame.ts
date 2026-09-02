@@ -46,7 +46,23 @@ const EDGE = 26;
 const PLAYER_MAX_X = 400;
 const PLAYER_MAX_Y = 250;
 /** Reaching ~90% of top speed in about 0.1s is what makes the run feel snappy. */
-const ACCEL_LAMBDA = 22;
+/**
+ * Hold-to-accelerate.
+ *
+ * A tap used to hit full speed in about 45ms, which made positioning feel like
+ * teleporting rather than running. Now a fresh press starts at HOLD_BASE of top
+ * speed and climbs to full over HOLD_RAMP seconds, so a nudge is a nudge and a
+ * committed run is a run. The ramp resets when the key is released or the
+ * direction flips, which is what makes the commitment meaningful.
+ *
+ * The volley corridor guard assumes the player covers PLAYER_MAX_X * lead *
+ * REACH_SAFETY (0.52). Starting from rest the average factor over a typical
+ * 1.2s lead is ~0.79, so every gap the guard places is still reachable.
+ */
+const HOLD_BASE = 0.42;
+const HOLD_RAMP = 0.8;
+
+const ACCEL_LAMBDA = 11;
 const BRAKE_LAMBDA = 27;
 const PLAYER_R = 17;
 /** Shaved off the sum of radii: every death should look like it actually touched. */
@@ -176,6 +192,11 @@ export class PoopGame extends BaseGame {
 
   private readonly pose = blankPose();
   private readonly pc: Circle = { x: 0, y: 0, r: PLAYER_R };
+  /** Seconds the current direction has been held, per axis. */
+  private holdX = 0;
+  private holdY = 0;
+  private holdDirX = 0;
+  private holdDirY = 0;
   private readonly hc: Circle = { x: 0, y: 0, r: 1 };
   private readonly po: ParticleOptions = { x: 0, y: 0 };
   private readonly tLabel: TextOptions = { size: 22, align: "center", baseline: "middle" };
@@ -211,6 +232,10 @@ export class PoopGame extends BaseGame {
 
   protected onReset(): void {
     this.booster.reset();
+    this.holdX = 0;
+    this.holdY = 0;
+    this.holdDirX = 0;
+    this.holdDirY = 0;
     if (this.poops.length === 0) {
       for (let i = 0; i < POOP_POOL; i++) this.poops.push(blankPoop());
       for (let i = 0; i < DECAL_POOL; i++) this.decals.push(blankDecal());
@@ -403,10 +428,23 @@ export class PoopGame extends BaseGame {
     const ax = this.input.axisX();
     const ay = this.input.axisY();
 
+    // Charge each axis separately: a player already sprinting right should not
+    // lose their run because they tapped up to dodge.
+    if (ax !== 0 && ax === this.holdDirX) this.holdX = Math.min(HOLD_RAMP, this.holdX + dt);
+    else if (ax !== 0) { this.holdDirX = ax; this.holdX = 0; }
+    else { this.holdDirX = 0; this.holdX = 0; }
+
+    if (ay !== 0 && ay === this.holdDirY) this.holdY = Math.min(HOLD_RAMP, this.holdY + dt);
+    else if (ay !== 0) { this.holdDirY = ay; this.holdY = 0; }
+    else { this.holdDirY = 0; this.holdY = 0; }
+
+    const chargeX = HOLD_BASE + (1 - HOLD_BASE) * (this.holdX / HOLD_RAMP);
+    const chargeY = HOLD_BASE + (1 - HOLD_BASE) * (this.holdY / HOLD_RAMP);
+
     // Boost raises the target speed the damping chases, so the character
     // accelerates into it instead of snapping.
-    this.vx = damp(this.vx, ax * PLAYER_MAX_X * boost, ax !== 0 ? ACCEL_LAMBDA : BRAKE_LAMBDA, dt);
-    this.vy = damp(this.vy, ay * PLAYER_MAX_Y * boost, ay !== 0 ? ACCEL_LAMBDA : BRAKE_LAMBDA, dt);
+    this.vx = damp(this.vx, ax * PLAYER_MAX_X * boost * chargeX, ax !== 0 ? ACCEL_LAMBDA : BRAKE_LAMBDA, dt);
+    this.vy = damp(this.vy, ay * PLAYER_MAX_Y * boost * chargeY, ay !== 0 ? ACCEL_LAMBDA : BRAKE_LAMBDA, dt);
     this.px += this.vx * dt;
     this.py += this.vy * dt;
 

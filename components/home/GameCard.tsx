@@ -47,11 +47,12 @@ function CardArt({ id, accent }: { id: GameMeta["id"]; accent: string }) {
             <circle cx={x + r * 0.3} cy={y + r * 0.5} r={1.5} fill="#3a2412" />
           </g>
         ))}
-        <ellipse cx={70} cy={74} rx={16} ry={4} fill="rgba(24,28,45,0.10)" />
-        <rect x={57} y={48} width={26} height={24} rx={12} fill={accent} />
-        <circle cx={64} cy={58} r={2.2} fill="#22252d" />
-        <circle cx={76} cy={58} r={2.2} fill="#22252d" />
-        <path d="M66 65 q4 3.5 8 0" stroke="#22252d" strokeWidth={2} fill="none" strokeLinecap="round" />
+        <ellipse cx={70} cy={76} rx={15} ry={4} fill="rgba(24,28,45,0.10)" />
+        <circle cx={70} cy={60} r={14} fill={accent} stroke="#2f2a24" strokeWidth={2.2} />
+        <ellipse cx={65} cy={54} rx={3.6} ry={2.6} transform="rotate(-30 65 54)" fill="#ffffff" opacity={0.55} />
+        <circle cx={65.5} cy={57.5} r={2.1} fill="#22252d" />
+        <circle cx={74.5} cy={57.5} r={2.1} fill="#22252d" />
+        <path d="M64.5 64 a6.2 6.2 0 0 0 11 0" stroke="#22252d" strokeWidth={2.2} fill="none" strokeLinecap="round" />
       </svg>
     );
   }
@@ -81,10 +82,13 @@ function CardArt({ id, accent }: { id: GameMeta["id"]; accent: string }) {
         {/* Mid-air, arcing over the block ahead. */}
         <path d="M30 58 q14 -26 30 -4" stroke={accent} strokeWidth={2} fill="none" strokeDasharray="3 4" opacity={0.5} />
         <ellipse cx={46} cy={64} rx={11} ry={3} fill="rgba(24,28,45,0.10)" />
-        <rect x={38} y={26} width={19} height={24} rx={9.5} fill="#ffffff" stroke={accent} strokeWidth={3} />
-        <circle cx={44} cy={35} r={2} fill="#22252d" />
-        <circle cx={52} cy={35} r={2} fill="#22252d" />
-        <path d="M41 51 l-4 7 M54 51 l4 7" stroke={accent} strokeWidth={3} strokeLinecap="round" />
+        <rect x={36} y={24} width={21} height={28} rx={10.5} fill={accent} stroke="#5b3fb8" strokeWidth={2} />
+        <path d="M40 30 a6 6 0 0 1 6 -4" stroke="#ffffff" strokeWidth={3} strokeLinecap="round" fill="none" opacity={0.55} />
+        <ellipse cx={46.5} cy={35} rx={8} ry={6} fill="#ffffff" />
+        <circle cx={43.5} cy={35} r={1.9} fill="#22252d" />
+        <circle cx={49.5} cy={35} r={1.9} fill="#22252d" />
+        <circle cx={41} cy={46} r={2} fill="#ffffff" opacity={0.7} />
+        <path d="M41 52 l-4 7 M52 52 l4 7" stroke="#5b3fb8" strokeWidth={3} strokeLinecap="round" />
         <rect x={84} y={50} width={16} height={16} rx={4} fill="#ff6b8a" stroke="rgba(24,28,45,0.16)" strokeWidth={1.5} />
         <rect x={110} y={30} width={20} height={9} rx={4} fill="#ffb443" stroke="rgba(24,28,45,0.16)" strokeWidth={1.5} />
       </svg>

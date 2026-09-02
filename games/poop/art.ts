@@ -24,10 +24,6 @@ export const CONFETTI_COLORS = ["#ff6b8a", "#ffb443", "#4ecb71", "#4f8cff", "#a7
 
 const ACCENT = "#ffa62b";
 const ACCENT_DEEP = "#e07a12";
-const SKIN = "#ffd2a0";
-const SKIN_SHADE = "#f0b880";
-const PANTS = "#3a4a78";
-const HAIR = "#4a2f1c";
 const INK = "#26221d";
 const OUTLINE = "#2f2a24";
 const SHADOW_INK = "rgba(24, 28, 45, 0.20)";
@@ -257,137 +253,111 @@ export function drawCloud(g: CanvasRenderingContext2D, c: Cloud): void {
  * the pale sky: legs cycle while running, the whole body leans and squashes,
  * and the mouth blows open when something is about to land.
  */
+/**
+ * The player: a smiley ball, matching the character on the site preview.
+ *
+ * A ball is also the honest shape here — the kill test is a circle of radius
+ * PLAYER_R, so a humanoid silhouette was promising a hitbox the game never had.
+ * GuyPose is unchanged, so squash, lean, blink, scream and the death flatten
+ * all still drive it.
+ */
 export function drawGuy(g: CanvasRenderingContext2D, p: GuyPose): void {
-  const stride = Math.sin(p.legPhase) * 10 * p.run;
-  const swing = Math.sin(p.legPhase + Math.PI) * 9 * p.run;
+  const R = 17;
+  const bob = Math.sin(p.legPhase) * 1.6 * p.run;
 
   g.save();
-  g.translate(p.x, p.y);
-  g.rotate(p.lean + p.dead * 1.3);
+  g.translate(p.x, p.y - R - 6 + bob);
+  g.rotate(p.lean * 1.4 + p.dead * 1.3);
   g.scale(p.squashX, p.squashY);
 
   g.lineCap = "round";
   g.lineJoin = "round";
 
-  // Legs first so the torso overlaps the hips.
-  g.strokeStyle = PANTS;
-  g.lineWidth = 7.5;
-  g.beginPath();
-  g.moveTo(-4.5, 8);
-  g.lineTo(-4.5 + stride, 25);
-  g.moveTo(4.5, 8);
-  g.lineTo(4.5 - stride, 25);
-  g.stroke();
-  g.strokeStyle = ACCENT_DEEP;
-  g.lineWidth = 6.5;
-  g.beginPath();
-  g.moveTo(-4.5 + stride, 25.5);
-  g.lineTo(-8 + stride, 27);
-  g.moveTo(4.5 - stride, 25.5);
-  g.lineTo(1 - stride, 27);
-  g.stroke();
-
-  // Arms flail behind the lean.
-  g.strokeStyle = OUTLINE;
-  g.lineWidth = 7.5;
-  g.beginPath();
-  g.moveTo(-10, -6);
-  g.lineTo(-14, 4 + swing);
-  g.moveTo(10, -6);
-  g.lineTo(14, 4 - swing);
-  g.stroke();
-  g.strokeStyle = SKIN;
-  g.lineWidth = 4.5;
-  g.stroke();
-
-  // Torso: a fat rounded capsule, carrying the body's drop shadow.
+  // Body, carrying the drop shadow that lifts him off the floor.
   g.shadowColor = SHADOW_INK;
-  g.shadowBlur = 9;
+  g.shadowBlur = 10;
   g.shadowOffsetY = 4;
   g.fillStyle = ACCENT;
-  roundRect(g, -13, -14, 26, 26, 12);
+  g.beginPath();
+  g.arc(0, 0, R, 0, TAU);
   g.fill();
   g.shadowColor = "rgba(0,0,0,0)";
   g.shadowBlur = 0;
   g.shadowOffsetY = 0;
-  g.strokeStyle = OUTLINE;
-  g.lineWidth = 2.4;
-  roundRect(g, -13, -14, 26, 26, 12);
-  g.stroke();
-  g.fillStyle = "rgba(47, 42, 36, 0.14)";
-  roundRect(g, -12, 3, 24, 8, 5);
-  g.fill();
 
-  // Head.
-  g.fillStyle = SKIN;
+  // Warm underside, so the ball reads as round rather than as a flat disc.
+  g.fillStyle = ACCENT_DEEP;
+  g.globalAlpha = 0.28;
   g.beginPath();
-  g.arc(0, -26, 12.5, 0, TAU);
+  g.arc(0, 2.5, R - 1.5, 0.15 * Math.PI, 0.85 * Math.PI);
   g.fill();
-  g.fillStyle = SKIN_SHADE;
-  g.beginPath();
-  g.ellipse(0, -19.5, 9, 4.5, 0, 0, Math.PI);
-  g.fill();
-  // Mop of hair, drawn as a capped arc across the top of the skull.
-  g.fillStyle = HAIR;
-  g.beginPath();
-  g.arc(0, -26, 12.5, Math.PI * 1.06, Math.PI * 2);
-  g.closePath();
-  g.fill();
+  g.globalAlpha = 1;
+
   g.strokeStyle = OUTLINE;
-  g.lineWidth = 2.4;
+  g.lineWidth = 2.6;
   g.beginPath();
-  g.arc(0, -26, 12.5, 0, TAU);
+  g.arc(0, 0, R, 0, TAU);
   g.stroke();
+
+  // Specular highlight, up and to the left like every other light in the scene.
+  g.fillStyle = "rgba(255, 255, 255, 0.55)";
+  g.beginPath();
+  g.ellipse(-6, -7.5, 4.2, 3, -0.5, 0, TAU);
+  g.fill();
 
   g.fillStyle = INK;
-  if (p.dead > 0.35) {
-    // X eyes: the universal shorthand for "got hit by falling poop".
+  if (p.dead > 0.05) {
+    // Xx eyes and an open mouth.
     g.strokeStyle = INK;
-    g.lineWidth = 2.4;
+    g.lineWidth = 2.2;
     g.beginPath();
-    g.moveTo(-8, -30);
-    g.lineTo(-2.5, -24.5);
-    g.moveTo(-2.5, -30);
-    g.lineTo(-8, -24.5);
-    g.moveTo(2.5, -30);
-    g.lineTo(8, -24.5);
-    g.moveTo(8, -30);
-    g.lineTo(2.5, -24.5);
+    g.moveTo(-8.5, -4.5);
+    g.lineTo(-3.5, 0.5);
+    g.moveTo(-3.5, -4.5);
+    g.lineTo(-8.5, 0.5);
+    g.moveTo(3.5, -4.5);
+    g.lineTo(8.5, 0.5);
+    g.moveTo(8.5, -4.5);
+    g.lineTo(3.5, 0.5);
     g.stroke();
     g.beginPath();
-    g.ellipse(0, -18, 4.4, 3.4, 0, 0, TAU);
-    g.fill();
-    g.fillStyle = "#ff6b8a";
-    g.beginPath();
-    g.ellipse(0, -14.5, 2.6, 4.4, 0, 0, TAU);
+    g.ellipse(0, 7, 4.2, 3.4, 0, 0, TAU);
     g.fill();
   } else {
-    // Big dot eyes.
-    const open = 0.7 + p.eyes * 2.7;
+    const open = 0.7 + p.eyes * 2.6;
     g.beginPath();
-    g.ellipse(-4.6, -27.5, 2.4, open, 0, 0, TAU);
-    g.ellipse(4.6, -27.5, 2.4, open, 0, 0, TAU);
+    g.ellipse(-5.6, -3, 2.5, open, 0, 0, TAU);
+    g.ellipse(5.6, -3, 2.5, open, 0, 0, TAU);
     g.fill();
     if (p.eyes > 0.5) {
       g.fillStyle = "#ffffff";
       g.beginPath();
-      g.arc(-5.4, -28.6, 0.8, 0, TAU);
-      g.arc(3.8, -28.6, 0.8, 0, TAU);
+      g.arc(-6.4, -4.1, 0.85, 0, TAU);
+      g.arc(4.8, -4.1, 0.85, 0, TAU);
       g.fill();
       g.fillStyle = INK;
     }
-    // Rosy cheeks — small, warm, never competing with the hazard.
-    g.globalAlpha = 0.5;
+
+    // Mouth: a smile at rest, opening into a scream as a turd closes in.
+    if (p.scream > 0.15) {
+      g.beginPath();
+      g.ellipse(0, 6, 2.4 + p.scream * 2.6, 1.6 + p.scream * 4, 0, 0, TAU);
+      g.fill();
+    } else {
+      g.strokeStyle = INK;
+      g.lineWidth = 2.2;
+      g.beginPath();
+      g.arc(0, 3, 6.2, 0.22 * Math.PI, 0.78 * Math.PI);
+      g.stroke();
+    }
+
+    g.globalAlpha = 0.45;
     g.fillStyle = "#ff9db2";
     g.beginPath();
-    g.ellipse(-8, -22.5, 2.6, 1.8, 0, 0, TAU);
-    g.ellipse(8, -22.5, 2.6, 1.8, 0, 0, TAU);
+    g.ellipse(-10, 2, 2.8, 2, 0, 0, TAU);
+    g.ellipse(10, 2, 2.8, 2, 0, 0, TAU);
     g.fill();
     g.globalAlpha = 1;
-    g.fillStyle = INK;
-    g.beginPath();
-    g.ellipse(0, -20, 1.8 + p.scream * 3.4, 1.3 + p.scream * 4.6, 0, 0, TAU);
-    g.fill();
   }
 
   g.restore();

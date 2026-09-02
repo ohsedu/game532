@@ -281,11 +281,15 @@ function HoldButton({
   );
 }
 
-const DIRS: { key: ArrowKey; label: string; cell: string }[] = [
-  { key: "ArrowUp", label: "↑", cell: "col-start-2 row-start-1" },
-  { key: "ArrowLeft", label: "←", cell: "col-start-1 row-start-2" },
-  { key: "ArrowRight", label: "→", cell: "col-start-3 row-start-2" },
-  { key: "ArrowDown", label: "↓", cell: "col-start-2 row-start-3" },
+const DIRS: { id: string; keys: ArrowKey[]; label: string; cell: string }[] = [
+  { id: "ul", keys: ["ArrowUp", "ArrowLeft"], label: "↖", cell: "col-start-1 row-start-1" },
+  { id: "u", keys: ["ArrowUp"], label: "↑", cell: "col-start-2 row-start-1" },
+  { id: "ur", keys: ["ArrowUp", "ArrowRight"], label: "↗", cell: "col-start-3 row-start-1" },
+  { id: "l", keys: ["ArrowLeft"], label: "←", cell: "col-start-1 row-start-2" },
+  { id: "r", keys: ["ArrowRight"], label: "→", cell: "col-start-3 row-start-2" },
+  { id: "dl", keys: ["ArrowDown", "ArrowLeft"], label: "↙", cell: "col-start-1 row-start-3" },
+  { id: "d", keys: ["ArrowDown"], label: "↓", cell: "col-start-2 row-start-3" },
+  { id: "dr", keys: ["ArrowDown", "ArrowRight"], label: "↘", cell: "col-start-3 row-start-3" },
 ];
 
 /** Four discrete buttons, for the facing game where each press is one input. */
@@ -307,7 +311,7 @@ function DPad({
     >
       {DIRS.map((d) => (
         <button
-          key={d.key}
+          key={d.id}
           type="button"
           disabled={disabled}
           className={
@@ -320,9 +324,9 @@ function DPad({
           onPointerDown={(e) => {
             if (disabled || e.pointerType === "mouse") return;
             e.preventDefault();
-            input?.virtualTap(d.key);
+            for (const k of d.keys) input?.virtualTap(k);
           }}
-          aria-label={d.key}
+          aria-label={d.id}
         >
           {d.label}
         </button>
