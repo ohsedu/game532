@@ -25,10 +25,44 @@ const fredoka = Fredoka({
   display: "swap",
 });
 
+const TITLE = "게임532";
+const DESCRIPTION =
+  "방향키만으로 즐기는 아케이드 미니게임 3종. 총알 피하기, 똥 피하기, 방향 사수. 점수를 기록하고 랭킹에 도전하세요.";
+
+/**
+ * Absolute base for og:image and friends.
+ *
+ * Without metadataBase Next falls back to localhost, so a shared link would
+ * point its preview image at the sharer machine and render nothing. Vercel
+ * supplies the production host at build time; the literal is the fallback for
+ * a plain `next build` elsewhere.
+ */
+const SITE_URL =
+  process.env.NEXT_PUBLIC_SITE_URL ??
+  (process.env.VERCEL_PROJECT_PRODUCTION_URL
+    ? "https://" + process.env.VERCEL_PROJECT_PRODUCTION_URL
+    : "https://game.ohsedu.site");
+
 export const metadata: Metadata = {
-  title: "게임532",
-  description:
-    "방향키만으로 즐기는 아케이드 미니게임 3종. 총알 피하기, 똥 피하기, 방향 사수. 점수를 기록하고 랭킹에 도전하세요.",
+  metadataBase: new URL(SITE_URL),
+  title: TITLE,
+  description: DESCRIPTION,
+  applicationName: TITLE,
+  // app/opengraph-image.png and app/twitter-image.png are picked up by file
+  // convention, so the image URLs are not repeated here.
+  openGraph: {
+    type: "website",
+    siteName: TITLE,
+    title: TITLE,
+    description: DESCRIPTION,
+    url: SITE_URL,
+    locale: "ko_KR",
+  },
+  twitter: {
+    card: "summary_large_image",
+    title: TITLE,
+    description: DESCRIPTION,
+  },
 };
 
 export const viewport: Viewport = {
