@@ -15,6 +15,8 @@ export interface HudStat {
 export interface GameServices {
   input: InputManager;
   audio: AudioManager;
+  /** True on a touch device, so a game can word its own prompts correctly. */
+  isTouch: boolean;
   /**
    * Fired only when the integer score actually changes, so React re-renders are
    * bounded by score changes rather than by frames.
@@ -42,6 +44,8 @@ export abstract class BaseGame {
 
   protected readonly input: InputManager;
   protected readonly audio: AudioManager;
+  /** True on a touch device. Use it for prompt wording, never for gameplay. */
+  protected readonly isTouch: boolean;
   protected readonly fx: ParticleSystem;
   protected readonly shake: ScreenShake;
   private readonly services: GameServices;
@@ -62,6 +66,7 @@ export abstract class BaseGame {
     this.services = services;
     this.input = services.input;
     this.audio = services.audio;
+    this.isTouch = services.isTouch;
     this.fx = new ParticleSystem(particleCapacity);
     this.shake = new ScreenShake();
   }

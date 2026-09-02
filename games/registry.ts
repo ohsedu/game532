@@ -50,7 +50,7 @@ export const GAME_LIST: readonly GameMeta[] = [
     controls: "정확히 멈출수록 블록이 덜 잘린다 · PERFECT 연속이면 폭이 돌아온다",
     keys: "SPACE 로 블록 내려놓기",
     accent: "#4ecb71",
-    touch: "action",
+    touch: "tap",
   },
   {
     id: "runner",
@@ -61,7 +61,7 @@ export const GAME_LIST: readonly GameMeta[] = [
     controls: "장애물을 뛰어넘고 미끄러져 통과 · 아슬아슬할수록 보너스",
     keys: "SPACE 점프 (길게 누르면 높이) · ↓ 슬라이드",
     accent: "#a77bff",
-    touch: "action",
+    touch: "jump-slide",
   },
   {
     id: "aim",
@@ -71,7 +71,7 @@ export const GAME_LIST: readonly GameMeta[] = [
     description: "사라지기 전에 클릭해라. 순수 반응속도와 정확도 싸움.",
     controls: "사라지기 전에 정확히 맞혀라 · 놓치면 목숨이 준다",
     keys: "마우스로 조준하고 클릭",
-    accent: "#ff6b8a",
+    accent: "#14b8c4",
     touch: "pointer",
   },
 ] as const;

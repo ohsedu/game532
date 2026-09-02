@@ -50,7 +50,11 @@ export type TouchMode =
   | "joystick"
   /** Tap a side of the board to face that way. */
   | "sector"
-  /** One big button - jump, drop, whatever the game calls it. */
+  /** One big button on each side - jump, drop, whatever the game calls it. */
   | "action"
+  /** Tap anywhere on the board; no buttons at all. */
+  | "tap"
+  /** Left button jumps, right button slides. */
+  | "jump-slide"
   /** Tap the board directly; the game reads pointer coordinates. */
   | "pointer";

@@ -106,6 +106,7 @@ export default function GameCanvas({
     const game = createGame(gameId, {
       input,
       audio,
+      isTouch: window.matchMedia("(pointer: coarse)").matches,
       onScore: (s) => onScoreRef.current(s),
       onStats: (s) => onStatsRef.current(s),
       onGameOver: (s, elapsed) => onGameOverRef.current(s, elapsed),
@@ -162,6 +163,13 @@ export default function GameCanvas({
         return;
       }
       if (e.pointerType === "mouse") return;
+      if (mode === "tap") {
+        // The whole board is the button. Nothing to aim at, so no coordinates.
+        e.preventDefault();
+        audio.unlock();
+        input.virtualActionTap();
+        return;
+      }
       if (mode !== "sector") return;
       e.preventDefault();
       audio.unlock();

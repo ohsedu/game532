@@ -21,7 +21,7 @@ import {
   type Target,
 } from "./entities";
 
-const ACCENT = "#ff6b8a";
+const ACCENT = "#14b8c4";
 const BG = "#f7f8fc";
 const FLOOR = "#eef0f7";
 const INK = "#22252d";

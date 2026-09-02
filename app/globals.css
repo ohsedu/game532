@@ -299,6 +299,8 @@ a {
   --dpad-btn: 2.5rem;
   /* Boost matches the stick so neither thumb feels like the second-class one. */
   --boost-size: var(--stick-size);
+  /* Jump and slide are pressed under pressure, so they get more thumb. */
+  --action-size: 7rem;
   --board-w: min(calc(100vw - 2rem), 1000px, calc((100dvh - var(--board-reserve)) * 10 / 7));
 }
 
@@ -308,6 +310,7 @@ a {
     --stick-size: 4.5rem;
     --knob-size: 2.1rem;
     --dpad-btn: 2.1rem;
+    --action-size: 5.5rem;
   }
 }
 

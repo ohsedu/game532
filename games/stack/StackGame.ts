@@ -62,7 +62,7 @@ const ANCHOR_Y = 250;
  * Rows placed before the player touches anything, so the first drop lands on a
  * plinth instead of on a single brick floating over an empty floor.
  */
-const FOUNDATION_ROWS = 3;
+const FOUNDATION_ROWS = 1;
 /**
  * Ring buffer of settled rows. The death pull-back bottoms out at CAM_SCALE_MIN,
  * which can show at most 700 / (0.22 * 34) ~= 94 rows, and that shot is anchored
@@ -200,6 +200,18 @@ const HINT_TXT: TextOptions = {
   color: INK_DIM,
   alpha: 1,
   letterSpacing: "5px",
+};
+/** Shown until the very first block lands, so an idle board never looks broken. */
+const START_TXT: TextOptions = {
+  size: 26,
+  color: ACCENT,
+  alpha: 1,
+};
+const START_SUB_TXT: TextOptions = {
+  size: 14,
+  color: INK_DIM,
+  alpha: 1,
+  letterSpacing: "3px",
 };
 const BANNER_TITLE_TXT: TextOptions = {
   size: 25,
@@ -1108,9 +1120,23 @@ export class StackGame extends BaseGame {
   }
 
   protected onRenderOverlay(g: CanvasRenderingContext2D): void {
-    if (this.hintT > 0 && this.status === "playing") {
+    if (this.status === "playing" && this.placed === 0) {
+      // Worded for the device actually in the player hands: telling a phone to
+      // press SPACE is the fastest way to look broken.
+      const pulse = 0.78 + Math.sin(this.elapsed * 5) * 0.22;
+      START_TXT.alpha = pulse;
+      START_SUB_TXT.alpha = pulse * 0.8;
+      text(
+        g,
+        this.isTouch ? "화면을 탭하세요" : "SPACE 를 누르세요",
+        CENTER_X,
+        this.height - 96,
+        START_TXT
+      );
+      text(g, "블록이 멈춰서 쌓입니다", CENTER_X, this.height - 62, START_SUB_TXT);
+    } else if (this.hintT > 0 && this.status === "playing") {
       HINT_TXT.alpha = this.hintT * 0.9;
-      text(g, "SPACE / TAP TO DROP", CENTER_X, this.height - 54, HINT_TXT);
+      text(g, this.isTouch ? "TAP TO DROP" : "SPACE TO DROP", CENTER_X, this.height - 54, HINT_TXT);
     }
 
     if (this.bannerT <= 0) return;

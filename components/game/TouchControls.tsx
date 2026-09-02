@@ -127,13 +127,17 @@ export default function TouchLayer({
     };
   }, [mode, setKnob, release]);
 
-  if (mode === "pointer") return null;
+  // "pointer" and "tap" games are played on the board itself, so the layer
+  // renders nothing at all rather than putting a button over the play area.
+  if (mode === "pointer" || mode === "tap") return null;
 
   const left =
     mode === "sector" ? (
       <DPad accent={accent} input={input} disabled={disabled} />
+    ) : mode === "jump-slide" ? (
+      <ActionButton accent={accent} input={input} disabled={disabled} label="JUMP" big />
     ) : mode === "action" ? (
-      <ActionButton accent={accent} input={input} disabled={disabled} label="TAP" />
+      <ActionButton accent={accent} input={input} disabled={disabled} label="TAP" big />
     ) : (
       <StickView accent={accent} knobRef={leftKnob} disabled={disabled} />
     );
@@ -141,8 +145,10 @@ export default function TouchLayer({
   const right =
     mode === "sector" ? (
       <DPad accent={accent} input={input} disabled={disabled} />
+    ) : mode === "jump-slide" ? (
+      <HoldButton accent={accent} input={input} disabled={disabled} label="SLIDE" />
     ) : mode === "action" ? (
-      <ActionButton accent={accent} input={input} disabled={disabled} label="TAP" />
+      <ActionButton accent={accent} input={input} disabled={disabled} label="TAP" big />
     ) : (
       <ActionButton accent={accent} input={input} disabled={disabled} label="BOOST" />
     );
@@ -199,11 +205,13 @@ function ActionButton({
   input,
   disabled,
   label,
+  big,
 }: {
   accent: string;
   input: InputManager | null;
   disabled: boolean;
   label: string;
+  big?: boolean;
 }) {
   const set = (down: boolean) => input?.setVirtualBoost(down);
   return (
@@ -211,7 +219,50 @@ function ActionButton({
       type="button"
       disabled={disabled}
       className={
-        "pointer-events-auto flex h-[var(--boost-size)] w-[var(--boost-size)] touch-none select-none items-center justify-center rounded-full border-2 bg-white/55 text-xs backdrop-blur-[2px] transition-transform active:scale-90 " +
+        "pointer-events-auto flex touch-none select-none items-center justify-center rounded-full border-2 bg-white/55 backdrop-blur-[2px] transition-transform active:scale-90 " +
+        (big
+          ? "h-[var(--action-size)] w-[var(--action-size)] text-sm "
+          : "h-[var(--boost-size)] w-[var(--boost-size)] text-xs ") +
+        (disabled ? "opacity-0" : "opacity-100")
+      }
+      style={{ borderColor: accent + "55", color: accent }}
+      onPointerDown={(e) => {
+        if (disabled || e.pointerType === "mouse") return;
+        e.preventDefault();
+        set(true);
+      }}
+      onPointerUp={() => set(false)}
+      onPointerCancel={() => set(false)}
+      onPointerLeave={() => set(false)}
+      aria-label={label}
+    >
+      {label}
+    </button>
+  );
+}
+
+/**
+ * Holds an arrow for as long as the thumb is down. Sliding is a held state, so
+ * a tap-style press would end the slide the instant it began.
+ */
+function HoldButton({
+  accent,
+  input,
+  disabled,
+  label,
+}: {
+  accent: string;
+  input: InputManager | null;
+  disabled: boolean;
+  label: string;
+}) {
+  const set = (down: boolean) => input?.setVirtual("ArrowDown", down);
+  return (
+    <button
+      type="button"
+      disabled={disabled}
+      className={
+        "pointer-events-auto flex h-[var(--action-size)] w-[var(--action-size)] touch-none select-none items-center justify-center rounded-full border-2 bg-white/55 text-sm backdrop-blur-[2px] transition-transform active:scale-90 " +
         (disabled ? "opacity-0" : "opacity-100")
       }
       style={{ borderColor: accent + "55", color: accent }}

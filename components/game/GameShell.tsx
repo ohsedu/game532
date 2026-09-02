@@ -26,6 +26,8 @@ const TOUCH_HINT: Record<TouchMode, string> = {
   joystick: "화면을 끌어서 이동 · BOOST 로 가속",
   sector: "적이 오는 쪽 화면을 탭",
   action: "TAP 버튼으로 조작",
+  tap: "화면을 탭",
+  "jump-slide": "JUMP 로 뛰고 SLIDE 로 미끄러지기",
   pointer: "타겟을 탭",
 };
 

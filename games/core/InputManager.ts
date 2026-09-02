@@ -24,6 +24,8 @@ export class InputManager {
   private boostVirtual = false;
   /** Press edge on the action/boost channel, cleared each frame. */
   private actionPressed = false;
+  /** Set when a tap-style action fires, so it releases at end of frame. */
+  private actionTap = false;
   /** Pointer in logical game coordinates; -1 when the pointer has never been
    *  over the board. Only aim-style games read it. */
   private ptrX = -1;
@@ -179,6 +181,15 @@ export class InputManager {
   }
 
   /**
+   * One-shot action press, released at the end of the frame. For games played
+   * by tapping the board rather than holding a button.
+   */
+  virtualActionTap(): void {
+    this.setVirtualBoost(true);
+    this.actionTap = true;
+  }
+
+  /**
    * True only on the frame the action button went down.
    *
    * Same physical channel as boost — Space, or the on-screen button. A game
@@ -251,6 +262,10 @@ export class InputManager {
     this.lastPress = null;
     this.actionPressed = false;
     this.ptrPressed = false;
+    if (this.actionTap) {
+      this.boostVirtual = false;
+      this.actionTap = false;
+    }
     if (this.taps.size > 0) {
       for (const k of this.taps) {
         this.virtual.delete(k);
@@ -264,6 +279,7 @@ export class InputManager {
     this.boostHeld = false;
     this.boostVirtual = false;
     this.actionPressed = false;
+    this.actionTap = false;
     this.ptrDown = false;
     this.ptrPressed = false;
     this.held.clear();

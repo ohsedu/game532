@@ -19,7 +19,7 @@ export const TAU = Math.PI * 2;
  *            real target could ever wear it, the single read the whole
  *            variation depends on would be gone.
  */
-export const TARGET_FILL: readonly string[] = ["#ff6b8a", "#ffb443", "#4f8cff"];
+export const TARGET_FILL: readonly string[] = ["#ffb443", "#4f8cff", "#a77bff"];
 
 /** Darker companion per fill, for the outline that lifts a disc off the floor. */
 export const TARGET_LINE: readonly string[] = ["#c8425f", "#c07a12", "#2f6ad1"];
