@@ -1,4 +1,5 @@
 import { BaseGame, type GameServices, type HudStat } from "@/games/core/BaseGame";
+import { Booster } from "@/games/core/Booster";
 import { circleHitForgiving, edgeGap, outOfBounds, type Circle } from "@/games/core/Collision";
 import {
   OPENING_GRACE,
@@ -53,6 +54,10 @@ const C_BLOOM = "rgba(255,255,255,0.55)";
 const C_FLASH = "#fff3e6";
 
 /** Confetti. Indexed with a rolling counter so no run ever allocates a color. */
+/** Boost livery. Red is otherwise unused by the player, so it reads instantly. */
+const BOOST_RED = "#ef3f52";
+const C_BOOST_HALO = withAlpha(BOOST_RED, 0.22);
+
 const CANDY: readonly string[] = ["#ff6b8a", "#ffb443", "#4ecb71", "#4f8cff", "#a77bff"];
 
 // --- Layout of the drawn card. Cosmetic only: nothing here is ever collided
@@ -280,7 +285,10 @@ export class DodgeGame extends BaseGame {
     super(services, 640);
   }
 
+  private readonly booster = new Booster(1.7);
+
   protected onReset(): void {
+    this.booster.reset();
     for (let i = 0; i < this.bullets.length; i++) this.bullets[i].active = false;
     this.poolCursor = 0;
 
@@ -393,6 +401,9 @@ export class DodgeGame extends BaseGame {
   }
 
   private movePlayer(dt: number): void {
+    // Boost scales both thrust and the speed cap, so it feels like extra power
+    // rather than the same acceleration against a higher ceiling.
+    const boost = this.booster.update(dt, this.input.isBoosting());
     const ix = this.input.axisX();
     const iy = this.input.axisY();
     let dx = ix;
@@ -404,11 +415,11 @@ export class DodgeGame extends BaseGame {
     }
 
     if (ix !== 0 || iy !== 0) {
-      let accel = ACCEL;
+      let accel = ACCEL * boost;
       const sp = Math.hypot(this.pvx, this.pvy);
       if (sp > 1) {
         const opposing = -(dx * this.pvx + dy * this.pvy) / sp;
-        if (opposing > 0) accel += ACCEL * BRAKE_BONUS * opposing;
+        if (opposing > 0) accel += ACCEL * boost * BRAKE_BONUS * opposing;
       }
       this.pvx += dx * accel * dt;
       this.pvy += dy * accel * dt;
@@ -420,8 +431,9 @@ export class DodgeGame extends BaseGame {
     }
 
     const speed = Math.hypot(this.pvx, this.pvy);
-    if (speed > MAX_SPEED) {
-      const k = MAX_SPEED / speed;
+    const cap = MAX_SPEED * boost;
+    if (speed > cap) {
+      const k = cap / speed;
       this.pvx *= k;
       this.pvy *= k;
     }
@@ -1412,6 +1424,8 @@ export class DodgeGame extends BaseGame {
 
   private drawPlayer(g: CanvasRenderingContext2D): void {
     const speed = Math.hypot(this.pvx, this.pvy) / MAX_SPEED;
+    const hot = this.booster.active;
+    const skin = hot ? BOOST_RED : ACCENT;
 
     g.save();
     // Soft shadow: on a light floor this is what lifts the player off the panel.
@@ -1427,8 +1441,8 @@ export class DodgeGame extends BaseGame {
     g.beginPath();
     g.arc(this.px, this.py, BODY_R, 0, TAU);
     g.fill();
-    g.strokeStyle = ACCENT;
-    g.lineWidth = 2.6;
+    g.strokeStyle = skin;
+    g.lineWidth = hot ? 3.4 : 2.6;
     g.globalAlpha = 0.5 + 0.3 * speed;
     g.stroke();
     // Three rotating arcs riding the outline: motion the eye can pick up even
@@ -1462,11 +1476,11 @@ export class DodgeGame extends BaseGame {
     // ring, and the single highest-contrast mark on the screen. Never a glow —
     // on a light floor a halo is the first thing to disappear.
     g.save();
-    g.fillStyle = C_CORE_HALO;
+    g.fillStyle = hot ? C_BOOST_HALO : C_CORE_HALO;
     g.beginPath();
-    g.arc(this.px, this.py, CORE_R + 4.5, 0, TAU);
+    g.arc(this.px, this.py, CORE_R + (hot ? 7 : 4.5), 0, TAU);
     g.fill();
-    g.fillStyle = CORE_BLUE;
+    g.fillStyle = hot ? BOOST_RED : CORE_BLUE;
     g.beginPath();
     g.arc(this.px, this.py, CORE_R, 0, TAU);
     g.fill();
@@ -1509,6 +1523,8 @@ export class DodgeGame extends BaseGame {
   }
 
   protected onRenderOverlay(g: CanvasRenderingContext2D): void {
+    this.booster.render(g, this.width - 30, 214, 11, 300, ACCENT);
+
     if (this.bannerT <= 0) return;
     const k = this.bannerT / BANNER_TIME;
     // Snap in, hold, drift out. onUpdate stops at death, so bannerT freezes —

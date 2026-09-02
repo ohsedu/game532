@@ -18,6 +18,10 @@ function isArrow(k: string): k is ArrowKey {
  * facing direction.
  */
 export class InputManager {
+  /** Boost is a separate channel: it is not a direction, so it never enters
+   *  the arrow sets that drive movement and facing. */
+  private boostHeld = false;
+  private boostVirtual = false;
   private held = new Set<ArrowKey>();
   private virtual = new Set<ArrowKey>();
   private pressed = new Set<ArrowKey>();
@@ -41,6 +45,12 @@ export class InputManager {
   }
 
   private onKeyDown = (e: KeyboardEvent) => {
+    if (e.code === "Space") {
+      // Space scrolls the page otherwise.
+      e.preventDefault();
+      this.boostHeld = true;
+      return;
+    }
     if (!isArrow(e.key)) return;
     // Arrow keys scroll the page otherwise.
     e.preventDefault();
@@ -52,6 +62,11 @@ export class InputManager {
   };
 
   private onKeyUp = (e: KeyboardEvent) => {
+    if (e.code === "Space") {
+      e.preventDefault();
+      this.boostHeld = false;
+      return;
+    }
     if (!isArrow(e.key)) return;
     e.preventDefault();
     this.held.delete(e.key);
@@ -132,6 +147,7 @@ export class InputManager {
   }
 
   clearVirtual(): void {
+    this.boostVirtual = false;
     if (this.virtual.size === 0) return;
     for (const k of ARROW_KEYS) {
       if (this.virtual.has(k)) {
@@ -142,6 +158,15 @@ export class InputManager {
   }
 
   // --- Queries --------------------------------------------------------------
+
+  /** True while boost is requested, from the keyboard or the touch button. */
+  isBoosting(): boolean {
+    return this.boostHeld || this.boostVirtual;
+  }
+
+  setVirtualBoost(down: boolean): void {
+    this.boostVirtual = down;
+  }
 
   isDown(k: ArrowKey): boolean {
     return this.held.has(k) || this.virtual.has(k);
@@ -183,6 +208,8 @@ export class InputManager {
   }
 
   clear(): void {
+    this.boostHeld = false;
+    this.boostVirtual = false;
     this.held.clear();
     this.virtual.clear();
     this.pressed.clear();

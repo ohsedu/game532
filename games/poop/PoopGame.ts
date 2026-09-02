@@ -1,4 +1,5 @@
 import { BaseGame, type GameServices, type HudStat } from "@/games/core/BaseGame";
+import { Booster } from "@/games/core/Booster";
 import { circleHitForgiving, edgeGap, type Circle } from "@/games/core/Collision";
 import {
   OPENING_GRACE,
@@ -95,6 +96,12 @@ const INK_DIM = "#6d7280";
 const ACCENT = "#ffa62b";
 /** Same hue, pushed darker so accent text still reads on a near-white sky. */
 const ACCENT_DEEP = "#d97706";
+
+/** Boost aura: layered gold, hottest at the centre. */
+const AURA_HOT = "rgba(255, 244, 190, 0.85)";
+const AURA_MID = "rgba(255, 196, 66, 0.55)";
+const AURA_EDGE = "rgba(255, 196, 66, 0)";
+const AURA_FLAME = "rgba(255, 214, 92, 0.62)";
 const GROUND_FILL = "#f4e6d0";
 const GROUND_TOP = "#fdf3e3";
 const GROUND_EDGE = "rgba(255, 166, 43, 0.45)";
@@ -200,7 +207,10 @@ export class PoopGame extends BaseGame {
 
   // --- Lifecycle ------------------------------------------------------------
 
+  private readonly booster = new Booster(1.7);
+
   protected onReset(): void {
+    this.booster.reset();
     if (this.poops.length === 0) {
       for (let i = 0; i < POOP_POOL; i++) this.poops.push(blankPoop());
       for (let i = 0; i < DECAL_POOL; i++) this.decals.push(blankDecal());
@@ -389,11 +399,14 @@ export class PoopGame extends BaseGame {
   }
 
   private updatePlayer(dt: number): void {
+    const boost = this.booster.update(dt, this.input.isBoosting());
     const ax = this.input.axisX();
     const ay = this.input.axisY();
 
-    this.vx = damp(this.vx, ax * PLAYER_MAX_X, ax !== 0 ? ACCEL_LAMBDA : BRAKE_LAMBDA, dt);
-    this.vy = damp(this.vy, ay * PLAYER_MAX_Y, ay !== 0 ? ACCEL_LAMBDA : BRAKE_LAMBDA, dt);
+    // Boost raises the target speed the damping chases, so the character
+    // accelerates into it instead of snapping.
+    this.vx = damp(this.vx, ax * PLAYER_MAX_X * boost, ax !== 0 ? ACCEL_LAMBDA : BRAKE_LAMBDA, dt);
+    this.vy = damp(this.vy, ay * PLAYER_MAX_Y * boost, ay !== 0 ? ACCEL_LAMBDA : BRAKE_LAMBDA, dt);
     this.px += this.vx * dt;
     this.py += this.vy * dt;
 
@@ -1086,11 +1099,60 @@ export class PoopGame extends BaseGame {
     g.fill();
     g.restore();
 
+    if (this.booster.active) this.drawAura(g);
+
     drawGuy(g, this.pose);
+  }
+
+  /**
+   * Super-saiyan flare while boosting: a layered golden glow plus flame licks
+   * rising off him. Drawn UNDER the character so it never hides his face, and
+   * animated off elapsed time so it flickers instead of sitting still.
+   */
+  private drawAura(g: CanvasRenderingContext2D): void {
+    const t = this.elapsed;
+    const cx = this.px;
+    const cy = this.py + 4;
+    const pulse = 1 + Math.sin(t * 22) * 0.06;
+
+    g.save();
+
+    // Two soft haloes: a wide warm wash and a tighter hot core.
+    for (let i = 0; i < 2; i++) {
+      const rr = (i === 0 ? 52 : 34) * pulse;
+      const grad = g.createRadialGradient(cx, cy, 0, cx, cy, rr);
+      grad.addColorStop(0, i === 0 ? AURA_MID : AURA_HOT);
+      grad.addColorStop(1, AURA_EDGE);
+      g.fillStyle = grad;
+      g.beginPath();
+      g.arc(cx, cy, rr, 0, Math.PI * 2);
+      g.fill();
+    }
+
+    // Flame licks. Fixed count, phase-offset per tongue, so this allocates
+    // nothing per frame.
+    g.fillStyle = AURA_FLAME;
+    for (let i = 0; i < 7; i++) {
+      const phase = t * 9 + i * 1.7;
+      const sway = Math.sin(phase) * 5;
+      const bx = cx + (i - 3) * 7.5;
+      const h = 20 + (Math.sin(phase * 1.3) * 0.5 + 0.5) * 22;
+      g.beginPath();
+      g.moveTo(bx - 4.5, cy - 6);
+      g.quadraticCurveTo(bx + sway, cy - 6 - h * 0.6, bx + sway * 0.4, cy - 6 - h);
+      g.quadraticCurveTo(bx + sway - 1, cy - 6 - h * 0.5, bx + 4.5, cy - 6);
+      g.closePath();
+      g.fill();
+    }
+
+    g.restore();
   }
 
   protected onRenderOverlay(g: CanvasRenderingContext2D): void {
     if (this.status !== "playing") return;
+
+    // Outside the shake transform, so the gauge never jitters.
+    this.booster.render(g, this.width - 30, 200, 11, 300, ACCENT, INK);
 
     if (this.elapsed < 3.2) {
       this.tHint.alpha = clamp(3.2 - this.elapsed, 0, 1) * 0.9;
@@ -1128,4 +1190,5 @@ export class PoopGame extends BaseGame {
       text(g, COMBO_BANNER[Math.min(this.combo, COMBO_BANNER.length - 1)], cx, 661, this.tCombo);
     }
   }
+
 }

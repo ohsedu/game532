@@ -293,11 +293,12 @@ export default function GameShell({ meta }: { meta: GameMeta }) {
         style={{ maxWidth: BOARD_WIDTH }}
       >
         <span className="hidden sm:inline">
-          ↑ ↓ ← → 로 조작 · <span className="text-ink-dim">ESC</span> 로 일시정지
+          ↑ ↓ ← → 로 조작 · <span className="text-ink-dim">SPACE</span> 부스터 ·{" "}
+          <span className="text-ink-dim">ESC</span> 로 일시정지
         </span>
         <span className="sm:hidden">
           {meta.touch === "joystick"
-            ? "화면을 끌어서 움직이세요"
+            ? "화면을 끌어서 움직이고 BOOST 로 가속하세요"
             : "적이 오는 쪽 화면을 탭하세요"}
           {" · 우측 상단 "}
           <span className="text-ink-dim">⏸</span>

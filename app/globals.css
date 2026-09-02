@@ -221,8 +221,7 @@ a {
    the hint line and hand the board the entire screen. */
 @media (orientation: landscape) and (max-height: 560px) and (pointer: coarse) {
   :root {
-    /* 0.75rem of padding plus the HUD bar that is now above the board. */
-    --board-reserve: 3.6rem;
+    --board-reserve: 0.75rem;
   }
   .landscape-hide {
     display: none !important;
@@ -301,6 +300,7 @@ a {
   --stick-size: 5.5rem;
   --knob-size: 2.5rem;
   --dpad-btn: 2.5rem;
+  --boost-size: 3.6rem;
 }
 
 @media (orientation: landscape) and (max-height: 430px) and (pointer: coarse) {
@@ -309,13 +309,14 @@ a {
     --stick-size: 4.5rem;
     --knob-size: 2.1rem;
     --dpad-btn: 2.1rem;
+    --boost-size: 3rem;
   }
 }
 
 /* --- HUD placement ---------------------------------------------------------
-   On a roomy screen the HUD floats over the board corners. On a phone that is
-   a real hazard — hazards enter from the edges — so it becomes a slim bar
-   above the board instead, and the board reserve pays for it. */
+   The HUD floats over the board corners. Pulling it into the flow instead
+   added height and brought back a page scroll, so it stays an overlay and
+   earns its keep by being see-through. */
 .hud-slot {
   position: absolute;
   inset-inline: 0;
@@ -324,11 +325,8 @@ a {
 }
 
 @media (orientation: landscape) and (max-height: 560px) and (pointer: coarse) {
-  .hud-slot {
-    position: static;
-  }
   .hud-inner {
-    padding: 0 0.15rem 0.3rem !important;
+    padding: 0.4rem !important;
   }
 }
 

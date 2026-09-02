@@ -45,7 +45,6 @@ export default function TouchLayer({
   surfaceRef,
 }: TouchLayerProps) {
   const leftKnob = useRef<HTMLDivElement | null>(null);
-  const rightKnob = useRef<HTMLDivElement | null>(null);
   const activeKnob = useRef<HTMLDivElement | null>(null);
   const pointerId = useRef<number | null>(null);
   const origin = useRef({ x: 0, y: 0 });
@@ -71,7 +70,6 @@ export default function TouchLayer({
     pointerId.current = null;
     inputRef.current?.clearVirtual();
     setKnob(leftKnob.current, 0, 0);
-    setKnob(rightKnob.current, 0, 0);
     activeKnob.current = null;
   }, [setKnob]);
 
@@ -92,9 +90,7 @@ export default function TouchLayer({
       e.preventDefault();
       pointerId.current = e.pointerId;
       origin.current = { x: e.clientX, y: e.clientY };
-      // The stick on the side the thumb came down is the one that responds.
-      const mid = window.innerWidth / 2;
-      activeKnob.current = e.clientX < mid ? leftKnob.current : rightKnob.current;
+      activeKnob.current = leftKnob.current;
       surface.setPointerCapture(e.pointerId);
     };
 
@@ -147,7 +143,7 @@ export default function TouchLayer({
   return (
     <>
       <StickView side="left" accent={accent} knobRef={leftKnob} disabled={disabled} />
-      <StickView side="right" accent={accent} knobRef={rightKnob} disabled={disabled} />
+      <BoostButton accent={accent} input={input} disabled={disabled} />
     </>
   );
 }
@@ -179,10 +175,48 @@ function StickView({
     >
       <div
         ref={knobRef}
-        className="absolute left-1/2 top-1/2 h-[var(--knob-size)] w-[var(--knob-size)] -translate-x-1/2 -translate-y-1/2 rounded-full shadow-md"
-        style={{ backgroundColor: accent }}
+        className="absolute left-1/2 top-1/2 h-[var(--knob-size)] w-[var(--knob-size)] rounded-full shadow-md"
+        style={{ backgroundColor: accent, transform: "translate(-50%, -50%)" }}
       />
     </div>
+  );
+}
+
+/**
+ * Held, not tapped — boost burns fuel for as long as the thumb is down, which
+ * is why this is a press/release pair rather than a click handler.
+ */
+function BoostButton({
+  accent,
+  input,
+  disabled,
+}: {
+  accent: string;
+  input: InputManager | null;
+  disabled: boolean;
+}) {
+  const set = (down: boolean) => input?.setVirtualBoost(down);
+  return (
+    <button
+      type="button"
+      disabled={disabled}
+      className={
+        "touch-only fixed top-1/2 right-[var(--pad-inset)] z-30 h-[var(--boost-size)] w-[var(--boost-size)] -translate-y-1/2 touch-none select-none items-center justify-center rounded-full border-2 bg-white/55 text-[10px] backdrop-blur-[2px] transition-transform active:scale-90 " +
+        (disabled ? "opacity-0" : "opacity-100")
+      }
+      style={{ borderColor: accent + "55", color: accent }}
+      onPointerDown={(e) => {
+        if (disabled || e.pointerType === "mouse") return;
+        e.preventDefault();
+        set(true);
+      }}
+      onPointerUp={() => set(false)}
+      onPointerCancel={() => set(false)}
+      onPointerLeave={() => set(false)}
+      aria-label="부스터"
+    >
+      BOOST
+    </button>
   );
 }
 

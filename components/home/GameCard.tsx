@@ -83,7 +83,7 @@ export default function GameCard({ meta, index }: { meta: GameMeta; index: numbe
       style={{ animationDelay: index * 80 + "ms" }}
     >
       <div
-        className="relative flex h-32 items-center justify-center px-8"
+        className="relative flex h-40 items-center justify-center px-8"
         style={{
           background: `linear-gradient(160deg, ${meta.accent}26, ${meta.accent}0d)`,
         }}
@@ -94,31 +94,31 @@ export default function GameCard({ meta, index }: { meta: GameMeta; index: numbe
         >
           GAME {meta.no}
         </span>
-        <div className="h-20 w-full transition-transform duration-300 group-hover:scale-110">
+        <div className="h-24 w-full transition-transform duration-300 group-hover:scale-110">
           <CardArt id={meta.id} accent={meta.accent} />
         </div>
       </div>
 
-      <div className="flex flex-1 flex-col p-6">
-        <h2 className="text-2xl text-ink">{meta.titleKo}</h2>
+      <div className="flex flex-1 flex-col p-7">
+        <h2 className="text-3xl text-ink">{meta.titleKo}</h2>
         <p className="num mt-1 text-[11px] tracking-widest" style={{ color: meta.accent }}>
           {meta.title}
         </p>
 
-        <p className="mt-3 min-h-10 text-[13px] leading-relaxed text-ink-dim">
+        <p className="mt-4 min-h-12 text-sm leading-relaxed text-ink-dim">
           {meta.description}
         </p>
-        <p className="mt-2 text-[11px] leading-relaxed text-ink-faint">{meta.controls}</p>
+        <p className="mt-2.5 text-xs leading-relaxed text-ink-faint">{meta.controls}</p>
 
         <div className="mt-auto flex items-end justify-between pt-6">
           <div>
             <p className="text-[10px] text-ink-faint">최고점수</p>
-            <p className="num mt-0.5 text-xl font-semibold text-ink">
+            <p className="num mt-0.5 text-2xl font-semibold text-ink">
               {best > 0 ? formatScore(best) : "—"}
             </p>
           </div>
           <span
-            className="pill px-6 py-2.5 text-sm text-white transition-transform group-hover:scale-105"
+            className="pill px-7 py-3 text-base text-white transition-transform group-hover:scale-105"
             style={{ backgroundColor: meta.accent }}
           >
             PLAY
