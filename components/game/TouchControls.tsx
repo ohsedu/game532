@@ -127,26 +127,34 @@ export default function TouchLayer({
     };
   }, [mode, setKnob, release]);
 
+  if (mode === "pointer") return null;
+
+  const left =
+    mode === "sector" ? (
+      <DPad accent={accent} input={input} disabled={disabled} />
+    ) : mode === "action" ? (
+      <ActionButton accent={accent} input={input} disabled={disabled} label="TAP" />
+    ) : (
+      <StickView accent={accent} knobRef={leftKnob} disabled={disabled} />
+    );
+
+  const right =
+    mode === "sector" ? (
+      <DPad accent={accent} input={input} disabled={disabled} />
+    ) : mode === "action" ? (
+      <ActionButton accent={accent} input={input} disabled={disabled} label="TAP" />
+    ) : (
+      <ActionButton accent={accent} input={input} disabled={disabled} label="BOOST" />
+    );
+
   return (
     <div className="touch-only pointer-events-none fixed inset-0 z-30 items-center">
-      <div className="flex flex-1 justify-center">
-        {mode === "sector" ? (
-          <DPad accent={accent} input={input} disabled={disabled} />
-        ) : (
-          <StickView accent={accent} knobRef={leftKnob} disabled={disabled} />
-        )}
-      </div>
+      <div className="flex flex-1 justify-center">{left}</div>
 
       {/* Reserves exactly the board is span so the controls never sit over it. */}
       <div className="shrink-0" style={{ width: "var(--board-w)" }} aria-hidden="true" />
 
-      <div className="flex flex-1 justify-center">
-        {mode === "sector" ? (
-          <DPad accent={accent} input={input} disabled={disabled} />
-        ) : (
-          <BoostButton accent={accent} input={input} disabled={disabled} />
-        )}
-      </div>
+      <div className="flex flex-1 justify-center">{right}</div>
     </div>
   );
 }
@@ -186,14 +194,16 @@ function StickView({
  * Held, not tapped — boost burns fuel for as long as the thumb is down, which
  * is why this is a press/release pair rather than a click handler.
  */
-function BoostButton({
+function ActionButton({
   accent,
   input,
   disabled,
+  label,
 }: {
   accent: string;
   input: InputManager | null;
   disabled: boolean;
+  label: string;
 }) {
   const set = (down: boolean) => input?.setVirtualBoost(down);
   return (
@@ -213,9 +223,9 @@ function BoostButton({
       onPointerUp={() => set(false)}
       onPointerCancel={() => set(false)}
       onPointerLeave={() => set(false)}
-      aria-label="부스터"
+      aria-label={label}
     >
-      BOOST
+      {label}
     </button>
   );
 }

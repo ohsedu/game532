@@ -10,7 +10,7 @@ create table if not exists public.scores (
 
   -- Defense in depth: the API route validates all of this too, but the database
   -- is the last line that cannot be bypassed by a bug in application code.
-  constraint scores_game_id_valid check (game_id in ('dodge', 'poop', 'direction')),
+  constraint scores_game_id_valid check (game_id in ('dodge', 'poop', 'direction', 'stack', 'runner', 'aim')),
   constraint scores_nickname_len check (char_length(nickname) between 1 and 12),
   constraint scores_score_range check (score >= 0 and score <= 10000000)
 );

@@ -92,8 +92,8 @@ export default function GameOver({
   const submitted = state.kind === "done";
 
   return (
-    <div className="absolute inset-0 z-20 flex overflow-y-auto overscroll-contain bg-white/75 p-4 backdrop-blur-[3px]">
-      <div className="panel-compact animate-pop card m-auto w-full max-w-sm px-7 py-7 text-center">
+    <div className="absolute inset-0 z-20 flex p-3 backdrop-blur-[3px] bg-white/75 sm:p-4">
+      <div className="panel-compact animate-pop card m-auto max-h-full w-full max-w-sm overflow-y-auto overscroll-contain px-7 py-7 text-center">
         {isNewRecord ? (
           <>
             <div className="panel-emoji animate-bob text-4xl" aria-hidden="true">

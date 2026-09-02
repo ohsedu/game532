@@ -19,8 +19,8 @@ export default function GamePause({
   onRestart,
 }: GamePauseProps) {
   return (
-    <div className="absolute inset-0 z-10 flex items-center justify-center bg-white/70 backdrop-blur-[3px]">
-      <div className="animate-pop card w-full max-w-xs px-7 py-8 text-center">
+    <div className="absolute inset-0 z-10 flex p-3 bg-white/70 backdrop-blur-[3px] sm:p-4">
+      <div className="panel-compact animate-pop card m-auto max-h-full w-full max-w-xs overflow-y-auto overscroll-contain px-7 py-8 text-center">
         <div
           className="mx-auto flex h-14 w-14 items-center justify-center rounded-full text-2xl"
           style={{ backgroundColor: accent + "22", color: accent }}

@@ -3,6 +3,9 @@ import type { BaseGame, GameServices } from "./core/BaseGame";
 import { DodgeGame } from "./dodge/DodgeGame";
 import { PoopGame } from "./poop/PoopGame";
 import { DirectionGame } from "./direction/DirectionGame";
+import { StackGame } from "./stack/StackGame";
+import { RunnerGame } from "./runner/RunnerGame";
+import { AimGame } from "./aim/AimGame";
 
 export const GAME_LIST: readonly GameMeta[] = [
   {
@@ -35,6 +38,36 @@ export const GAME_LIST: readonly GameMeta[] = [
     accent: "#ff6b8a",
     touch: "sector",
   },
+  {
+    id: "stack",
+    no: "04",
+    title: "STACK UP",
+    titleKo: "블록 쌓기",
+    description: "움직이는 블록을 정확히 멈춰 쌓아라. 어긋난 만큼 잘려나간다.",
+    controls: "스페이스 / 탭으로 블록 내려놓기",
+    accent: "#4ecb71",
+    touch: "action",
+  },
+  {
+    id: "runner",
+    no: "05",
+    title: "DASH RUN",
+    titleKo: "점프 러너",
+    description: "끝없이 달린다. 뛰어넘고, 미끄러지고, 부딪히면 끝.",
+    controls: "스페이스 점프 · 아래 방향키 슬라이드",
+    accent: "#a77bff",
+    touch: "action",
+  },
+  {
+    id: "aim",
+    no: "06",
+    title: "AIM LAB",
+    titleKo: "타겟 사수",
+    description: "사라지기 전에 클릭해라. 순수 반응속도와 정확도 싸움.",
+    controls: "마우스 클릭 / 화면 탭",
+    accent: "#ff6b8a",
+    touch: "pointer",
+  },
 ] as const;
 
 const BY_ID = new Map<GameId, GameMeta>(GAME_LIST.map((g) => [g.id, g]));
@@ -51,6 +84,9 @@ const FACTORIES: Record<GameId, GameFactory> = {
   dodge: (s) => new DodgeGame(s),
   poop: (s) => new PoopGame(s),
   direction: (s) => new DirectionGame(s),
+  stack: (s) => new StackGame(s),
+  runner: (s) => new RunnerGame(s),
+  aim: (s) => new AimGame(s),
 };
 
 export function createGame(id: GameId, services: GameServices): BaseGame {

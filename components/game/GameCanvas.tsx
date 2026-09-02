@@ -140,18 +140,50 @@ export default function GameCanvas({
       return sy >= 0 ? "ArrowDown" : "ArrowUp";
     };
 
-    // Mouse is deliberately excluded: the games are keyboard-first by design,
-    // and a stray click should never change the player's facing.
+    /** Client coords -> the fixed 1000x700 logical space. */
+    const toGame = (clientX: number, clientY: number): [number, number] => {
+      const rect = canvas.getBoundingClientRect();
+      return [
+        ((clientX - rect.left) / Math.max(1, rect.width)) * GAME_WIDTH,
+        ((clientY - rect.top) / Math.max(1, rect.height)) * GAME_HEIGHT,
+      ];
+    };
+
+    // Mouse is excluded for the arrow-driven games: they are keyboard-first by
+    // design and a stray click should never move the player. Aim-style games
+    // ("pointer" mode) are the exception, since there the pointer IS the input.
     const onPointerDown = (e: PointerEvent) => {
-      if (e.pointerType === "mouse") return;
       if (pausedRef.current) return;
-      if (touchRef.current !== "sector") return;
+      const mode = touchRef.current;
+      if (mode === "pointer") {
+        const [gx, gy] = toGame(e.clientX, e.clientY);
+        audio.unlock();
+        input.setPointer(gx, gy, true);
+        return;
+      }
+      if (e.pointerType === "mouse") return;
+      if (mode !== "sector") return;
       e.preventDefault();
       audio.unlock();
       input.virtualTap(sectorKey(e.clientX, e.clientY));
     };
 
+    const onPointerMove = (e: PointerEvent) => {
+      if (touchRef.current !== "pointer") return;
+      const [gx, gy] = toGame(e.clientX, e.clientY);
+      input.setPointer(gx, gy, input.pointerDown());
+    };
+
+    const onPointerUp = () => {
+      if (touchRef.current !== "pointer") return;
+      input.clearPointer();
+    };
+
     canvas.addEventListener("pointerdown", onPointerDown);
+    canvas.addEventListener("pointermove", onPointerMove);
+    canvas.addEventListener("pointerup", onPointerUp);
+    canvas.addEventListener("pointercancel", onPointerUp);
+    canvas.addEventListener("pointerleave", onPointerUp);
 
     const ro = new ResizeObserver(resize);
     ro.observe(canvas);
@@ -166,6 +198,10 @@ export default function GameCanvas({
     return () => {
       document.removeEventListener("visibilitychange", onVisibility);
       canvas.removeEventListener("pointerdown", onPointerDown);
+      canvas.removeEventListener("pointermove", onPointerMove);
+      canvas.removeEventListener("pointerup", onPointerUp);
+      canvas.removeEventListener("pointercancel", onPointerUp);
+      canvas.removeEventListener("pointerleave", onPointerUp);
       ro.disconnect();
       loop.stop();
       input.detach();

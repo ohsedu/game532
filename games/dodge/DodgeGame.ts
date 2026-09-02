@@ -44,8 +44,6 @@ const C_GRID_NEAR = "rgba(91,95,221,0.035)";
 const C_SHADOW = "rgba(24,28,45,0.10)";
 const C_SHADOW_SOFT = "rgba(24,28,45,0.07)";
 const C_FRAME = "rgba(91,95,221,0.10)";
-const C_PLAYER_GLOW = withAlpha(ACCENT, 0.1);
-const C_PLAYER_GLOW_IN = withAlpha(ACCENT, 0.14);
 const C_BODY_FILL = "#ffffff";
 const C_CORE_RING = withAlpha(INK, 0.75);
 const C_CORE_HALO = withAlpha(CORE_BLUE, 0.2);
@@ -1170,16 +1168,6 @@ export class DodgeGame extends BaseGame {
     // from reading as a frozen screenshot between waves.
     drawGrid(g, this.width, this.height, 100, this.gridOffset * 0.45, C_GRID_FAR);
     drawGrid(g, this.width, this.height, 50, this.gridOffset, C_GRID_NEAR);
-    // Pool of accent light under the player, built from two flat translucent
-    // discs. An additive gradient here would only wash the floor out to white.
-    g.fillStyle = C_PLAYER_GLOW;
-    g.beginPath();
-    g.arc(this.px, this.py, 120, 0, TAU);
-    g.fill();
-    g.fillStyle = C_PLAYER_GLOW_IN;
-    g.beginPath();
-    g.arc(this.px, this.py, 62, 0, TAU);
-    g.fill();
     g.restore();
   }
 

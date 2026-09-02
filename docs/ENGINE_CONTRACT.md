@@ -143,3 +143,53 @@ frame-rate-independent smoothing.
 6. **`die()` once.** Guard so a single frame cannot end the run twice.
 7. **TypeScript strict.** No `any`, no non-null assertions on possibly-undefined
    values, no unused variables (ESLint runs in the build).
+
+---
+
+## Action button and pointer (added for the second wave of games)
+
+Beyond the four arrows, two more channels exist. A game uses whichever suits
+it; nothing is required to use either.
+
+### Action button
+
+Space on desktop, an on-screen button on touch. One physical channel — a game
+either *holds* it or *taps* it, never both.
+
+```ts
+this.input.isBoosting();    // held  — used by the movement games for boost
+this.input.justActioned();  // edge  — true only on the frame it went down
+```
+
+Declare `touch: "action"` in the registry to get a big button on each side.
+
+### Pointer
+
+Only for aim-style games. Coordinates arrive already converted to the logical
+1000x700 space, so the game never touches DOM rects.
+
+```ts
+this.input.pointerX;          // -1 until the pointer has been over the board
+this.input.pointerY;
+this.input.pointerDown();     // held
+this.input.pointerJustDown(); // edge, cleared in endFrame
+```
+
+Declare `touch: "pointer"`. The touch layer then renders nothing — the board
+itself is the control — and unlike every other mode the mouse is live, because
+there the pointer IS the input.
+
+### Booster
+
+Shared speed boost with a self-refilling gauge, if a game wants one:
+
+```ts
+import { Booster } from "@/games/core/Booster";
+
+private readonly booster = new Booster(1.7);
+// onReset:  this.booster.reset()
+// onUpdate: const mult = this.booster.update(dt, this.input.isBoosting())
+// overlay:  this.booster.render(g, this.width - 30, 200, 11, 300, ACCENT, INK)
+```
+
+Do not re-tune its constants per game; they are shared on purpose.

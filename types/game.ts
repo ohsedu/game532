@@ -1,6 +1,19 @@
-export type GameId = "dodge" | "poop" | "direction";
+export type GameId =
+  | "dodge"
+  | "poop"
+  | "direction"
+  | "stack"
+  | "runner"
+  | "aim";
 
-export const GAME_IDS: readonly GameId[] = ["dodge", "poop", "direction"] as const;
+export const GAME_IDS: readonly GameId[] = [
+  "dodge",
+  "poop",
+  "direction",
+  "stack",
+  "runner",
+  "aim",
+] as const;
 
 export function isGameId(v: unknown): v is GameId {
   return typeof v === "string" && (GAME_IDS as readonly string[]).includes(v);
@@ -26,12 +39,16 @@ export interface GameMeta {
   controls: string;
   /** Tailwind-friendly accent hex, used for glow/borders */
   accent: string;
-  /**
-   * How touch input maps onto the four arrows on mobile.
-   * - "joystick": drag anywhere to steer (movement games)
-   * - "sector": tap a side of the play area to face that way (reaction game)
-   */
+  /** How touch input reaches the game on a phone. */
   touch: TouchMode;
 }
 
-export type TouchMode = "joystick" | "sector";
+export type TouchMode =
+  /** Drag anywhere to steer; a parked stick shows the vector. */
+  | "joystick"
+  /** Tap a side of the board to face that way. */
+  | "sector"
+  /** One big button - jump, drop, whatever the game calls it. */
+  | "action"
+  /** Tap the board directly; the game reads pointer coordinates. */
+  | "pointer";

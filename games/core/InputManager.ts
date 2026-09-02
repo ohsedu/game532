@@ -22,6 +22,14 @@ export class InputManager {
    *  the arrow sets that drive movement and facing. */
   private boostHeld = false;
   private boostVirtual = false;
+  /** Press edge on the action/boost channel, cleared each frame. */
+  private actionPressed = false;
+  /** Pointer in logical game coordinates; -1 when the pointer has never been
+   *  over the board. Only aim-style games read it. */
+  private ptrX = -1;
+  private ptrY = -1;
+  private ptrDown = false;
+  private ptrPressed = false;
   private held = new Set<ArrowKey>();
   private virtual = new Set<ArrowKey>();
   private pressed = new Set<ArrowKey>();
@@ -48,6 +56,7 @@ export class InputManager {
     if (e.code === "Space") {
       // Space scrolls the page otherwise.
       e.preventDefault();
+      if (!this.boostHeld && !e.repeat) this.actionPressed = true;
       this.boostHeld = true;
       return;
     }
@@ -165,7 +174,49 @@ export class InputManager {
   }
 
   setVirtualBoost(down: boolean): void {
+    if (down && !this.boostVirtual && !this.boostHeld) this.actionPressed = true;
     this.boostVirtual = down;
+  }
+
+  /**
+   * True only on the frame the action button went down.
+   *
+   * Same physical channel as boost — Space, or the on-screen button. A game
+   * either holds it (boost) or taps it (jump, drop); nothing needs both.
+   */
+  justActioned(): boolean {
+    return this.actionPressed;
+  }
+
+  // --- Pointer --------------------------------------------------------------
+
+  /** Fed by the canvas in logical game coordinates. */
+  setPointer(x: number, y: number, down: boolean): void {
+    this.ptrX = x;
+    this.ptrY = y;
+    if (down && !this.ptrDown) this.ptrPressed = true;
+    this.ptrDown = down;
+  }
+
+  clearPointer(): void {
+    this.ptrDown = false;
+  }
+
+  get pointerX(): number {
+    return this.ptrX;
+  }
+
+  get pointerY(): number {
+    return this.ptrY;
+  }
+
+  pointerDown(): boolean {
+    return this.ptrDown;
+  }
+
+  /** True only on the frame the pointer went down. */
+  pointerJustDown(): boolean {
+    return this.ptrPressed;
   }
 
   isDown(k: ArrowKey): boolean {
@@ -198,6 +249,8 @@ export class InputManager {
   endFrame(): void {
     this.pressed.clear();
     this.lastPress = null;
+    this.actionPressed = false;
+    this.ptrPressed = false;
     if (this.taps.size > 0) {
       for (const k of this.taps) {
         this.virtual.delete(k);
@@ -210,6 +263,9 @@ export class InputManager {
   clear(): void {
     this.boostHeld = false;
     this.boostVirtual = false;
+    this.actionPressed = false;
+    this.ptrDown = false;
+    this.ptrPressed = false;
     this.held.clear();
     this.virtual.clear();
     this.pressed.clear();

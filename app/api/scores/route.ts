@@ -28,6 +28,12 @@ const LIMITS: Record<GameId, { perSecond: number; absolute: number }> = {
   dodge: { perSecond: 400, absolute: 1_000_000 },
   poop: { perSecond: 400, absolute: 1_000_000 },
   direction: { perSecond: 2_500, absolute: 2_000_000 },
+  // Block-drop and target games score in lumps rather than per second, so the
+  // per-second bound is set from the fastest plausible tempo: roughly two
+  // placements or hits a second at the top combo multiplier.
+  stack: { perSecond: 1_500, absolute: 1_000_000 },
+  runner: { perSecond: 600, absolute: 1_000_000 },
+  aim: { perSecond: 2_000, absolute: 1_000_000 },
 };
 
 function bad(message: string, status = 400) {
