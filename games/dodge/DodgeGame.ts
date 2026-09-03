@@ -2221,14 +2221,16 @@ export class DodgeGame extends BaseGame {
   }
 
   /**
-   * The laser mark: a bolt firing to the right, with two speed lines behind it.
+   * The laser mark: a bead streaking right, trailing a beam behind it.
    *
    * Used for both the pickup on the floor and the charge indicator, so that
-   * what is collected and what is held are visibly the same object. The
-   * silhouette is a pointed dart where every hazard in this game is a disc, so
-   * it is told apart before its colour has been read at all.
+   * what is collected and what is held are visibly the same object.
    *
-   * Drawn around the origin at roughly 26x16, ready to be translated and
+   * The bead is a disc, and so is every hazard here — the tail is what keeps
+   * them apart, which is why it is the widest part of the silhouette. Blue,
+   * alone among everything on this floor, because it belongs to the player.
+   *
+   * Drawn around the origin at roughly 30x17, ready to be translated and
    * scaled by the caller.
    */
   private drawLaserIcon(
@@ -2239,42 +2241,68 @@ export class DodgeGame extends BaseGame {
   ): void {
     g.lineJoin = "round";
     g.lineCap = "round";
+    // The caller may already be fading this (a pickup blinks as it expires), so
+    // every alpha here is relative to whatever it set rather than absolute.
+    const base = g.globalAlpha;
 
-    // Speed lines: the icon reads as "in flight" rather than as an arrowhead.
-    g.strokeStyle = trim;
-    g.lineWidth = 2.2;
-    g.beginPath();
-    g.moveTo(-12.5, -4.6);
-    g.lineTo(-7.5, -4.6);
-    g.moveTo(-13.5, 4.6);
-    g.lineTo(-8.5, 4.6);
-    g.stroke();
-
-    // The bolt: a notched tail so it reads as fired, not as a signpost.
-    g.beginPath();
-    g.moveTo(13, 0);
-    g.lineTo(3.5, -6.4);
-    g.lineTo(-6.5, -6.4);
-    g.lineTo(-2, 0);
-    g.lineTo(-6.5, 6.4);
-    g.lineTo(3.5, 6.4);
-    g.closePath();
+    // Soft flare under the streak. Widest behind the orb, which is what gives
+    // the tail its heat rather than making it a solid wedge.
+    g.globalAlpha = base * 0.28;
     g.fillStyle = body;
+    g.beginPath();
+    g.moveTo(6, -8.6);
+    g.quadraticCurveTo(-7, -6, -21, 0);
+    g.quadraticCurveTo(-7, 6, 6, 8.6);
+    g.closePath();
     g.fill();
+
+    // The streak: widest at the bead and drawn to a point behind it. A blunt
+    // tail reads as a bar being dragged; a point reads as speed.
+    g.globalAlpha = base;
+    g.beginPath();
+    g.moveTo(6, -6.4);
+    g.quadraticCurveTo(-5, -4.3, -18, 0);
+    g.quadraticCurveTo(-5, 4.3, 6, 6.4);
+    g.closePath();
+    g.fill();
+
+    // Hot centre, tapered the same way rather than stroked — a stroke has one
+    // width end to end and lands as a white dash laid over the tail. Skipped
+    // when the icon is spent, which is most of what makes it read as dead.
+    if (core) {
+      g.fillStyle = core;
+      g.beginPath();
+      g.moveTo(4, -1.6);
+      g.quadraticCurveTo(-3, -0.9, -10.5, 0);
+      g.quadraticCurveTo(-3, 0.9, 4, 1.6);
+      g.closePath();
+      g.fill();
+    }
+
+    // The head: a bead riding the front of the streak. A round mass with a band
+    // around it, so the eye reads a thing being fired rather than a stray dash.
+    g.fillStyle = body;
     g.strokeStyle = trim;
     g.lineWidth = 2;
+    g.beginPath();
+    g.arc(7, 0, 6.2, 0, TAU);
+    g.fill();
     g.stroke();
 
-    // Hot slit down the middle. Skipped when the icon is dead, which is most of
-    // what makes the spent state read as spent.
+    // Band, tilted, so the bead has a front and a back.
+    g.lineWidth = 1.7;
+    g.beginPath();
+    g.ellipse(7, 0, 6.2, 2.4, -0.42, 0, TAU);
+    g.stroke();
+
     if (core) {
-      g.strokeStyle = core;
-      g.lineWidth = 2;
+      g.fillStyle = core;
       g.beginPath();
-      g.moveTo(-1.5, 0);
-      g.lineTo(7.5, 0);
-      g.stroke();
+      g.arc(5, -2.3, 1.9, 0, TAU);
+      g.fill();
     }
+
+    g.globalAlpha = base;
   }
 
   /**
