@@ -90,7 +90,16 @@ export const metadata: Metadata = {
 };
 
 export const viewport: Viewport = {
-  themeColor: "#f4f5f8",
+  /*
+   * The brand purple, matching talk532 — this is the colour Android Chrome
+   * paints its address bar, so the site is recognisable from the chrome down
+   * rather than starting at the page. It was the page background, which made
+   * the bar disappear into the phone's own UI.
+   *
+   * Same token as --color-primary in globals.css. A literal because this is
+   * metadata, not CSS, and never resolves a var().
+   */
+  themeColor: "#493add",
   colorScheme: "light",
 };
 

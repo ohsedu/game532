@@ -97,7 +97,7 @@ export default function TouchLayer({
   }, [disabled, release]);
 
   useEffect(() => {
-    if (mode !== "joystick") return;
+    if (mode !== "joystick" && mode !== "joystick-laser") return;
 
     const down = (e: PointerEvent) => {
       if (disabledRef.current || e.pointerType === "mouse") return;
@@ -172,6 +172,13 @@ export default function TouchLayer({
       <HoldButton accent={accent} input={input} disabled={disabled} label="SLIDE" />
     ) : mode === "action" ? (
       <ActionButton accent={accent} input={input} disabled={disabled} label="TAP" big />
+    ) : mode === "joystick-laser" ? (
+      // Boost stays where the thumb already expects it; the laser sits above,
+      // so reaching for the rarer move can never land on the common one.
+      <div className="flex flex-col items-center gap-2">
+        <SpecialButton accent={accent} input={input} disabled={disabled} label="LASER" />
+        <ActionButton accent={accent} input={input} disabled={disabled} label="BOOST" />
+      </div>
     ) : (
       <ActionButton accent={accent} input={input} disabled={disabled} label="BOOST" />
     );
@@ -223,6 +230,44 @@ function StickView({
  * Held, not tapped — boost burns fuel for as long as the thumb is down, which
  * is why this is a press/release pair rather than a click handler.
  */
+/**
+ * A tap on the special channel — a one-shot, unlike BOOST which is held.
+ *
+ * Fires on press rather than release: the whole point of the laser is that it
+ * lands the instant the player decides they need it.
+ */
+function SpecialButton({
+  accent,
+  input,
+  disabled,
+  label,
+}: {
+  accent: string;
+  input: InputManager | null;
+  disabled: boolean;
+  label: string;
+}) {
+  return (
+    <button
+      type="button"
+      disabled={disabled}
+      className={
+        "pointer-events-auto flex h-[var(--boost-size)] w-[var(--boost-size)] touch-none select-none items-center justify-center rounded-full border-2 bg-white/55 text-xs backdrop-blur-[2px] transition-transform active:scale-90 " +
+        (disabled ? "opacity-0" : "opacity-100")
+      }
+      style={{ borderColor: accent + "55", color: accent }}
+      onPointerDown={(e) => {
+        if (disabled || e.pointerType === "mouse") return;
+        e.preventDefault();
+        input?.virtualSpecialTap();
+      }}
+      aria-label={label}
+    >
+      {label}
+    </button>
+  );
+}
+
 function ActionButton({
   accent,
   input,

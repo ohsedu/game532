@@ -1124,13 +1124,13 @@ export class StackGame extends BaseGame {
   protected onRenderOverlay(g: CanvasRenderingContext2D): void {
     if (this.status === "playing" && this.placed === 0) {
       // Worded for the device actually in the player hands: telling a phone to
-      // press SPACE is the fastest way to look broken.
+      // press S is the fastest way to look broken.
       const pulse = 0.78 + Math.sin(this.elapsed * 5) * 0.22;
       START_TXT.alpha = pulse;
       START_SUB_TXT.alpha = pulse * 0.8;
       text(
         g,
-        this.isTouch ? "화면을 탭하세요" : "SPACE 를 누르세요",
+        this.isTouch ? "화면을 탭하세요" : "S 를 누르세요",
         CENTER_X,
         this.height - 96,
         START_TXT
@@ -1138,7 +1138,7 @@ export class StackGame extends BaseGame {
       text(g, "블록이 멈춰서 쌓입니다", CENTER_X, this.height - 62, START_SUB_TXT);
     } else if (this.hintT > 0 && this.status === "playing") {
       HINT_TXT.alpha = this.hintT * 0.9;
-      text(g, this.isTouch ? "TAP TO DROP" : "SPACE TO DROP", CENTER_X, this.height - 54, HINT_TXT);
+      text(g, this.isTouch ? "TAP TO DROP" : "S TO DROP", CENTER_X, this.height - 54, HINT_TXT);
     }
 
     if (this.bannerT <= 0) return;

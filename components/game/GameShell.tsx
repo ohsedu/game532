@@ -9,6 +9,7 @@ import type { InputManager } from "@/games/core/InputManager";
 import { commitBest } from "@/lib/localBest";
 import { useMyBest } from "@/lib/useMyBest";
 import { formatScore } from "@/lib/format";
+import AuthButton from "@/components/home/AuthButton";
 import GameCanvas from "./GameCanvas";
 import GameHUD from "./GameHUD";
 import GameOver from "./GameOver";
@@ -24,6 +25,7 @@ const EMPTY_STATS: HudStat[] = [];
 /** Phone-side control hint, keyed by how the game takes touch input. */
 const TOUCH_HINT: Record<TouchMode, string> = {
   joystick: "화면을 끌어서 이동 · BOOST 로 가속",
+  "joystick-laser": "화면을 끌어서 이동 · BOOST 가속 · LASER 발사",
   sector: "적이 오는 쪽 화면을 탭",
   action: "TAP 버튼으로 조작",
   tap: "화면을 탭",
@@ -187,25 +189,43 @@ export default function GameShell({ meta }: { meta: GameMeta }) {
         (touchActive ? " touch-none" : "")
       }
     >
+      {/*
+        A three-column grid rather than justify-between, so the title stays on
+        the board's centre line no matter how wide the two ends grow — which
+        they now do, because the avatar sits in the right one.
+
+        The avatar goes in this row instead of a row of its own: an extra row
+        costs height, and the board's width is derived from the height left
+        over, so a 44px strip above would shrink the play area on every screen
+        to show something that fits here for nothing.
+      */}
       <nav
-        className="landscape-hide mx-auto mb-4 flex w-full items-center justify-between gap-3"
+        className="landscape-hide mx-auto mb-4 grid w-full grid-cols-[1fr_auto_1fr] items-center gap-3"
         style={{ maxWidth: BOARD_WIDTH }}
       >
-        <Link
-          href="/"
-          className="pill border border-line bg-surface px-4 py-2 text-xs text-ink-dim transition-colors hover:border-line-strong hover:text-ink"
-        >
-          ← 게임 선택
-        </Link>
+        <div className="justify-self-start">
+          <Link
+            href="/"
+            className="pill border border-line bg-surface px-4 py-2 text-xs text-ink-dim transition-colors hover:border-line-strong hover:text-ink"
+          >
+            ← 게임 선택
+          </Link>
+        </div>
         <p className="truncate text-sm" style={{ color: meta.accent }}>
           GAME {meta.no} · {meta.titleKo}
         </p>
-        <Link
-          href={`/ranking?game=${meta.id}`}
-          className="pill border border-line bg-surface px-4 py-2 text-xs text-ink-dim transition-colors hover:border-line-strong hover:text-ink"
-        >
-          랭킹 →
-        </Link>
+        <div className="flex items-center gap-2 justify-self-end">
+          <Link
+            href={`/ranking?game=${meta.id}`}
+            className="pill border border-line bg-surface px-4 py-2 text-xs text-ink-dim transition-colors hover:border-line-strong hover:text-ink"
+          >
+            랭킹 →
+          </Link>
+          {/* Hidden on a narrow phone, where the row has no space to spare. */}
+          <div className="hidden sm:block">
+            <AuthButton />
+          </div>
+        </div>
       </nav>
 
       <div className="relative mx-auto w-full">

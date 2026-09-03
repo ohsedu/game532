@@ -48,6 +48,8 @@ export interface GameMeta {
 export type TouchMode =
   /** Drag anywhere to steer; a parked stick shows the vector. */
   | "joystick"
+  /** The same, plus a LASER button stacked above BOOST. */
+  | "joystick-laser"
   /** Tap a side of the board to face that way. */
   | "sector"
   /** One big button on each side - jump, drop, whatever the game calls it. */

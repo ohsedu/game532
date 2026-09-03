@@ -6,6 +6,34 @@ function isArrow(k: string): k is ArrowKey {
 }
 
 /**
+ * The action channel: boost when held, drop when tapped.
+ *
+ * S, and only S. It used to be Space, which a keyboard cannot always deliver:
+ * keys are read through a scanning matrix and a membrane board often cannot
+ * resolve three at once, so ↑+→+Space boosted and ↓+←+Space did nothing. No
+ * software can fix that — the event never arrives — and the cure is a key that
+ * shares no matrix line with the arrow cluster. S sits under the left hand,
+ * beside D, which is where the other half of the controls now lives.
+ */
+const ACTION_CODE = "KeyS";
+
+function isBoost(code: string): boolean {
+  return code === ACTION_CODE;
+}
+
+/**
+ * The special channel: a second one-shot action, independent of the first.
+ *
+ * Boost is held and this is tapped, so a game can offer both at once — which
+ * is the point. D, next to S, so both are under one hand.
+ */
+const SPECIAL_CODE = "KeyD";
+
+function isSpecial(code: string): boolean {
+  return code === SPECIAL_CODE;
+}
+
+/**
  * Arrow-keys-only input.
  *
  * Two sources feed the same four arrows: the physical keyboard, and a "virtual"
@@ -26,6 +54,11 @@ export class InputManager {
   private actionPressed = false;
   /** Set when a tap-style action fires, so it releases at end of frame. */
   private actionTap = false;
+  /** The special channel — D on a keyboard, its own button on a phone. */
+  private specialHeld = false;
+  private specialPressed = false;
+  /** Set when a touch button fires it, so it releases at end of frame. */
+  private specialTap = false;
   /** Pointer in logical game coordinates; -1 when the pointer has never been
    *  over the board. Only aim-style games read it. */
   private ptrX = -1;
@@ -55,8 +88,13 @@ export class InputManager {
   }
 
   private onKeyDown = (e: KeyboardEvent) => {
-    if (e.code === "Space") {
-      // Space scrolls the page otherwise.
+    if (isSpecial(e.code)) {
+      e.preventDefault();
+      if (!this.specialHeld && !e.repeat) this.specialPressed = true;
+      this.specialHeld = true;
+      return;
+    }
+    if (isBoost(e.code)) {
       e.preventDefault();
       if (!this.boostHeld && !e.repeat) this.actionPressed = true;
       this.boostHeld = true;
@@ -73,7 +111,12 @@ export class InputManager {
   };
 
   private onKeyUp = (e: KeyboardEvent) => {
-    if (e.code === "Space") {
+    if (isSpecial(e.code)) {
+      e.preventDefault();
+      this.specialHeld = false;
+      return;
+    }
+    if (isBoost(e.code)) {
       e.preventDefault();
       this.boostHeld = false;
       return;
@@ -199,6 +242,23 @@ export class InputManager {
     return this.actionPressed;
   }
 
+  /**
+   * True only on the frame the special key or button went down.
+   *
+   * Separate from the action channel so a game can hold boost and tap this in
+   * the same frame — dodge fires its laser mid-burn.
+   */
+  justSpecial(): boolean {
+    return this.specialPressed;
+  }
+
+  /** One-shot special press from a touch button. */
+  virtualSpecialTap(): void {
+    if (!this.specialHeld) this.specialPressed = true;
+    this.specialHeld = true;
+    this.specialTap = true;
+  }
+
   // --- Pointer --------------------------------------------------------------
 
   /** Fed by the canvas in logical game coordinates. */
@@ -261,7 +321,12 @@ export class InputManager {
     this.pressed.clear();
     this.lastPress = null;
     this.actionPressed = false;
+    this.specialPressed = false;
     this.ptrPressed = false;
+    if (this.specialTap) {
+      this.specialHeld = false;
+      this.specialTap = false;
+    }
     if (this.actionTap) {
       this.boostVirtual = false;
       this.actionTap = false;
@@ -280,6 +345,9 @@ export class InputManager {
     this.boostVirtual = false;
     this.actionPressed = false;
     this.actionTap = false;
+    this.specialHeld = false;
+    this.specialPressed = false;
+    this.specialTap = false;
     this.ptrDown = false;
     this.ptrPressed = false;
     this.held.clear();

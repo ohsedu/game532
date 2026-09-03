@@ -131,6 +131,44 @@ body::after {
   }
 }
 
+/* --- Loading dots ----------------------------------------------------------
+   Three dots bouncing in turn, offset by a third of the cycle each. The scale
+   floor keeps a dot visible at the bottom of its bounce, so the group always
+   reads as three waiting dots rather than one travelling one. */
+.dots {
+  display: inline-flex;
+  gap: 0.4rem;
+}
+
+.dots > span {
+  width: 0.5rem;
+  height: 0.5rem;
+  border-radius: 9999px;
+  background: var(--color-primary);
+  animation: arcade-dots 1.05s ease-in-out infinite;
+}
+
+.dots > span:nth-child(2) {
+  animation-delay: 0.15s;
+}
+
+.dots > span:nth-child(3) {
+  animation-delay: 0.3s;
+}
+
+@keyframes arcade-dots {
+  0%,
+  70%,
+  100% {
+    transform: translateY(0) scale(0.85);
+    opacity: 0.45;
+  }
+  35% {
+    transform: translateY(-0.4rem) scale(1);
+    opacity: 1;
+  }
+}
+
 @keyframes arcade-shimmer {
   from {
     background-position: -200% 0;
@@ -332,9 +370,31 @@ a {
 }
 
 /* --- Game-over panel on a short landscape screen ---------------------------
-   The full-height panel does not fit in ~390px, so it drops the decoration
-   first and keeps the score, the nickname field and the actions. */
+   A phone in landscape is wide and short — roughly 800x390 — and the panel was
+   a single 384px column down the middle of it. Stacked vertically the content
+   came to about 430px and scrolled, which is the one thing a modal that covers
+   a finished run must not do: the buttons end up below the fold.
+
+   So in landscape it turns sideways. The score reads on the left, the register
+   field and the actions on the right, and the tallest column is about 260px —
+   comfortably inside even a 375px viewport, with no scrollbar. Everywhere else
+   .panel-cols is a plain block and the markup stacks exactly as before. */
 @media (orientation: landscape) and (max-height: 560px) and (pointer: coarse) {
+  .panel-shell {
+    max-width: 44rem !important;
+  }
+  .panel-cols {
+    display: grid;
+    /* The form needs the room; the score only needs to be legible. */
+    grid-template-columns: minmax(0, 5fr) minmax(0, 7fr);
+    align-items: center;
+    gap: 1.5rem;
+  }
+  /* In block layout this margin is the gap under the score. Sideways there is
+     no "above", and it would only push the column off centre. */
+  .panel-col-form > :first-child {
+    margin-top: 0 !important;
+  }
   .panel-compact {
     padding: 1rem 1.25rem !important;
   }

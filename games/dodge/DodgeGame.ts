@@ -24,6 +24,8 @@ import {
   CAN_TRIM_OUTLINE,
   createBulletPool,
   createPickupPool,
+  PICK_FUEL,
+  PICK_LASER,
   createSpiral,
   createWallCue,
   KIND_AIMED,
@@ -282,6 +284,42 @@ const FUEL_LABEL: TextOptions = {
   letterSpacing: "2px",
 };
 
+// --- Laser -----------------------------------------------------------------
+/**
+ * One charge, ever. The run opens with it loaded and a spent one only comes
+ * back from a cell on the floor, so the question is never "should I fire" but
+ * "is this the moment" — which is the only interesting version of a panic
+ * button. Stockpiling would turn it into a second, better dodge.
+ */
+const LASER_MAX = 1;
+/**
+ * The beam kills for this long, not just on the frame it fires. A hitscan line
+ * would miss the bullet that was 20px short of it when the key went down,
+ * which is exactly the bullet the player fired at.
+ */
+const LASER_TIME = 0.3;
+/** Half-width of the kill band. Wide enough to clear a spread, not a screen. */
+const LASER_HALF_W = 30;
+/** The drawn beam outlives the kill window, fading, so the shot has a report. */
+const LASER_FADE = 0.42;
+/** Per bullet cleared. Small: the laser buys survival, not score. */
+const SCORE_PER_ZAP = 8;
+/**
+ * A cell only appears once the charge is spent, and never within this of the
+ * last one — otherwise a player who fires early gets a cell every cycle and the
+ * laser stops being scarce.
+ */
+const LASER_CELL_GAP = 14;
+/** Blue, alone among everything drawn here. It is the player's, like the core. */
+const LASER_CORE = "#ffffff";
+const LASER_BEAM = ACCENT;
+const LASER_GLOW = withAlpha(CORE_BLUE, 0.16);
+const LASER_CELL_BODY = "#3f8cff";
+const LASER_CELL_TRIM = "#1b4fa8";
+/** The spent charge: the same mark with the colour taken out of it. */
+const C_LASER_OFF = withAlpha(INK, 0.1);
+const C_LASER_OFF_TRIM = withAlpha(INK, 0.22);
+
 const BANNER_TIME = 1.8;
 const STAGE_NAMES: readonly string[] = [
   "SURVIVE",
@@ -342,6 +380,28 @@ export class DodgeGame extends BaseGame {
   private pvy = 0;
   private ringRot = 0;
   private trailCd = 0;
+
+  /**
+   * Where the laser would go. The player is a circle with no front, so "전방"
+   * has to mean the last direction they asked to move in — held keys, not
+   * velocity, since velocity is zero the instant they stop and the beam must
+   * not swing back to a default under them. Up at the start, because the run
+   * begins with the player facing the arena rather than a wall.
+   */
+  private faceX = 0;
+  private faceY = -1;
+  private laserCharges = LASER_MAX;
+  /** Kill window remaining. Above zero means the beam is live. */
+  private laserT = 0;
+  /** Drawn life remaining; outlives laserT so the beam fades out. */
+  private laserDraw = 0;
+  /** Origin and direction, frozen at the shot so the beam does not swing. */
+  private laserX = 0;
+  private laserY = 0;
+  private laserFx = 0;
+  private laserFy = -1;
+  /** Seconds since a laser cell last spawned, so they cannot bunch up. */
+  private sinceCell = LASER_CELL_GAP;
 
   private poolCursor = 0;
   private fireCd = 0.4;
@@ -410,6 +470,14 @@ export class DodgeGame extends BaseGame {
     this.core.y = this.py;
     this.ringRot = 0;
     this.trailCd = 0;
+    this.faceX = 0;
+    this.faceY = -1;
+    this.laserCharges = LASER_MAX;
+    this.laserT = 0;
+    this.laserDraw = 0;
+    // Not zero: the first cell must not arrive the moment the first shot is
+    // fired, and a run opens already holding its charge.
+    this.sinceCell = 0;
 
     this.cue.active = false;
     this.spiral.p = randRange(0, 4);
@@ -478,6 +546,13 @@ export class DodgeGame extends BaseGame {
     if (this.grazeSfxCd > 0) this.grazeSfxCd -= dt;
     if (this.grazeFlash > 0) this.grazeFlash = Math.max(0, this.grazeFlash - dt * 3.4);
     if (this.fuelFlash > 0) this.fuelFlash = Math.max(0, this.fuelFlash - dt / FUEL_FLASH_TIME);
+    this.sinceCell += dt;
+    if (this.laserDraw > 0) this.laserDraw -= dt;
+    if (this.laserT > 0) {
+      this.laserT -= dt;
+      this.burnBullets();
+    }
+    if (this.input.justSpecial()) this.fireLaser();
 
     if (this.streakTimer > 0) {
       this.streakTimer -= dt;
@@ -552,6 +627,14 @@ export class DodgeGame extends BaseGame {
 
     this.core.x = this.px;
     this.core.y = this.py;
+
+    // Facing follows the keys, and only while they are held — a released key
+    // leaves the last direction standing so the beam still points where the
+    // player was going.
+    if (ix !== 0 || iy !== 0) {
+      this.faceX = dx;
+      this.faceY = dy;
+    }
 
     // Measured after the wall clamp on purpose: a component the wall just
     // zeroed must not light the trail, or a player pinned in a corner sits in a
@@ -1107,6 +1190,125 @@ export class DodgeGame extends BaseGame {
     }
   }
 
+  /**
+   * Fires, if there is a charge. Origin and direction are frozen here rather
+   * than tracked: a beam that follows the player for its 0.3s sweeps the arena
+   * like a searchlight, which is a different and much stronger weapon than the
+   * one that was aimed.
+   */
+  private fireLaser(): void {
+    if (this.laserCharges <= 0) {
+      // A dry trigger has to say so, or it reads as the key not working.
+      this.audio.play("click", 0.55, 0.35);
+      return;
+    }
+    this.laserCharges--;
+    this.laserT = LASER_TIME;
+    this.laserDraw = LASER_FADE;
+    this.laserX = this.px;
+    this.laserY = this.py;
+    this.laserFx = this.faceX;
+    this.laserFy = this.faceY;
+    this.audio.play("warn", 1.9, 0.5);
+    this.audio.play("success", 0.7, 0.3);
+    this.shake.add(7, 0.26);
+    this.laserSparks();
+  }
+
+  /**
+   * Sparks thrown sideways off the beam, all along its length.
+   *
+   * The beam itself is a still shape for its whole life; without these the shot
+   * is a bar that appears and fades. Debris leaving it at speed is what makes
+   * it read as energy rather than as a drawn rectangle.
+   */
+  private laserSparks(): void {
+    const fx = this.laserFx;
+    const fy = this.laserFy;
+    const nx = -fy;
+    const ny = fx;
+    const len = this.wallDistance(this.laserX, this.laserY, fx, fy);
+
+    for (let i = 0; i < 18; i++) {
+      // Biased toward the muzzle, where a real discharge is brightest.
+      const t = Math.random() * Math.random() * len;
+      const side = i % 2 === 0 ? 1 : -1;
+      const sp = randRange(90, 260);
+      this.puff(
+        this.laserX + fx * t + nx * side * randRange(0, LASER_HALF_W * 0.5),
+        this.laserY + fy * t + ny * side * randRange(0, LASER_HALF_W * 0.5),
+        nx * side * sp + fx * randRange(0, 120),
+        ny * side * sp + fy * randRange(0, 120),
+        randRange(0.2, 0.45),
+        randRange(2, 3.6),
+        0.3,
+        i % 3 === 0 ? LASER_CORE : LASER_BEAM,
+        "circle",
+        false,
+        0.35
+      );
+    }
+
+    // A ring left standing at the muzzle, under the drawn rings.
+    this.puff(this.laserX, this.laserY, 0, 0, 0.34, 14, 60, LASER_BEAM, "ring", false, 1);
+  }
+
+  /**
+   * Clears every bullet standing in the beam, this frame.
+   *
+   * Runs for the whole kill window rather than once at the shot, so a bullet
+   * that was still short of the line when the key went down — which is exactly
+   * the bullet being fired at — is caught on a later frame.
+   */
+  private burnBullets(): void {
+    const fx = this.laserFx;
+    const fy = this.laserFy;
+    let zapped = 0;
+
+    for (let i = 0; i < this.bullets.length; i++) {
+      const b = this.bullets[i];
+      if (!b.active) continue;
+      const rx = b.x - this.laserX;
+      const ry = b.y - this.laserY;
+      // Behind the muzzle is not in the beam. Half a bullet of slack, so one
+      // sitting on the player is still cleared.
+      const along = rx * fx + ry * fy;
+      if (along < -b.r) continue;
+      const across = rx * -fy + ry * fx;
+      if (across > LASER_HALF_W + b.r || across < -LASER_HALF_W - b.r) continue;
+
+      b.active = false;
+      zapped++;
+      this.zapPop(b.x, b.y, b.color);
+    }
+
+    if (zapped > 0) {
+      this.rawScore += zapped * SCORE_PER_ZAP;
+      this.audio.play("hit", 1.5, 0.22);
+    }
+  }
+
+  /** A bullet coming apart in the beam. */
+  private zapPop(x: number, y: number, color: string): void {
+    for (let i = 0; i < 5; i++) {
+      const a = randRange(0, TAU);
+      const sp = randRange(60, 190);
+      this.puff(
+        x,
+        y,
+        Math.cos(a) * sp,
+        Math.sin(a) * sp,
+        randRange(0.16, 0.34),
+        2.6,
+        0.4,
+        i === 0 ? LASER_CORE : color,
+        "circle",
+        false,
+        0.3
+      );
+    }
+  }
+
   private nextPickupDelay(): number {
     return (
       rampLinear(this.elapsed, PICKUP_EVERY_FROM, PICKUP_EVERY_TO, PICKUP_EVERY_SECONDS) +
@@ -1129,6 +1331,11 @@ export class DodgeGame extends BaseGame {
       this.rollPickupSpot();
       if (!this.spotIsSafe(this.candX, this.candY)) continue;
       slot.active = true;
+      // A cell only when the charge is spent and the last one is far enough
+      // behind. Everything else is fuel, which is never wasted.
+      const cell = this.laserCharges <= 0 && this.sinceCell >= LASER_CELL_GAP;
+      slot.kind = cell ? PICK_LASER : PICK_FUEL;
+      if (cell) this.sinceCell = 0;
       slot.x = this.candX;
       slot.y = this.candY;
       slot.life = PICKUP_LIFE;
@@ -1215,6 +1422,20 @@ export class DodgeGame extends BaseGame {
 
   private collect(pk: Pickup): void {
     pk.active = false;
+
+    if (pk.kind === PICK_LASER) {
+      // A cell is only ever placed while the charge is empty, so it cannot be
+      // collected full — but the clamp keeps that a property of this line
+      // rather than of the spawner staying correct forever.
+      this.laserCharges = Math.min(LASER_MAX, this.laserCharges + 1);
+      this.pickupPop(pk.x, pk.y, true);
+      this.rawScore += SCORE_PER_PICKUP;
+      this.audio.play("success", 1.5, 0.75);
+      this.audio.play("score", 1.7, 0.35);
+      this.shake.add(2.4, 0.16);
+      return;
+    }
+
     const gained = this.booster.refill(PICKUP_REFILL);
 
     // The pop fires either way — a can that vanishes in silence reads as a bug
@@ -1443,6 +1664,9 @@ export class DodgeGame extends BaseGame {
     if (this.curStage >= 3) this.drawEmitter(g);
     this.drawPickups(g);
     this.drawBullets(g);
+    // Over the bullets: the beam is what is removing them, so it has to be the
+    // thing on top rather than something they are drawn through.
+    if (this.laserDraw > 0) this.drawLaser(g);
     if (this.status === "playing") this.drawPlayer(g);
 
     if (this.status === "gameover") {
@@ -1722,6 +1946,127 @@ export class DodgeGame extends BaseGame {
     g.restore();
   }
 
+  /**
+   * The beam: three stacked bands, widest and faintest underneath.
+   *
+   * No additive blending — on this near-white floor "lighter" washes straight
+   * to paper. The brightness comes from a white core inside a solid blue band
+   * instead, which holds up over both the floor and a bullet.
+   *
+   * It fades and narrows over LASER_FADE, which outlasts the kill window: by
+   * the time the beam looks spent it already is.
+   */
+  private drawLaser(g: CanvasRenderingContext2D): void {
+    const k = Math.max(0, this.laserDraw / LASER_FADE);
+    // Snap to full on the first frame, then ease out — a linear fade reads as a
+    // beam being switched off rather than one discharging.
+    const a = k * k;
+    const fx = this.laserFx;
+    const fy = this.laserFy;
+    // Perpendicular, for the taper.
+    const nx = -fy;
+    const ny = fx;
+    const ox = this.laserX;
+    const oy = this.laserY;
+    const len = this.wallDistance(ox, oy, fx, fy);
+    const tipX = ox + fx * len;
+    const tipY = oy + fy * len;
+
+    g.save();
+
+    /*
+     * Three tapered quads, not three strokes of one line.
+     *
+     * A stroke is the same width end to end, which reads as a printed bar. A
+     * beam is widest where it leaves the muzzle and narrows as it goes, and
+     * that single change is most of what makes it look fired rather than drawn.
+     * Widths breathe with the fade, so the whole thing collapses toward its
+     * core as it dies.
+     */
+    const w = LASER_HALF_W;
+    this.beamBand(g, ox, oy, tipX, tipY, nx, ny, w * (0.5 + 0.5 * a), w * 0.42 * a + 3, LASER_GLOW, a * 0.95);
+    this.beamBand(g, ox, oy, tipX, tipY, nx, ny, 9 * a + 3, 5 * a + 1.6, LASER_BEAM, a);
+    this.beamBand(g, ox, oy, tipX, tipY, nx, ny, 4.2 * a + 1.2, 2 * a + 0.6, LASER_CORE, a);
+
+    /*
+     * Muzzle: a white flash under two rings expanding out of it. The rings are
+     * what sell the recoil — a flash alone pops and is gone, while something
+     * leaving the barrel says the shot had force behind it.
+     */
+    g.globalAlpha = a * 0.85;
+    g.fillStyle = LASER_CORE;
+    g.beginPath();
+    g.arc(ox, oy, 6 + 15 * a, 0, TAU);
+    g.fill();
+
+    g.lineCap = "round";
+    for (let i = 0; i < 2; i++) {
+      // Staggered, so the second ring is still arriving as the first fades.
+      const t = Math.min(1, (1 - k) * (i === 0 ? 1.6 : 1));
+      if (t <= 0 || t >= 1) continue;
+      g.globalAlpha = (1 - t) * 0.7;
+      g.strokeStyle = i === 0 ? LASER_CORE : LASER_BEAM;
+      g.lineWidth = 5 * (1 - t) + 1;
+      g.beginPath();
+      g.arc(ox, oy, 10 + t * 68, 0, TAU);
+      g.stroke();
+    }
+
+    // Where it lands. A beam that simply stops at the rim looks cut off; a
+    // splash says it hit something.
+    g.globalAlpha = a * 0.8;
+    g.fillStyle = LASER_CORE;
+    g.beginPath();
+    g.arc(tipX, tipY, 4 + 16 * a, 0, TAU);
+    g.fill();
+    g.globalAlpha = a * 0.45;
+    g.fillStyle = LASER_BEAM;
+    g.beginPath();
+    g.arc(tipX, tipY, 10 + 30 * a, 0, TAU);
+    g.fill();
+
+    g.restore();
+  }
+
+  /**
+   * One tapered quad of the beam. A method rather than a closure inside
+   * drawLaser: the engine contract bans allocation in the render path, and a
+   * closure is an allocation on every frame the beam is up.
+   */
+  private beamBand(
+    g: CanvasRenderingContext2D,
+    ox: number,
+    oy: number,
+    tipX: number,
+    tipY: number,
+    nx: number,
+    ny: number,
+    halfMuzzle: number,
+    halfTip: number,
+    fill: string,
+    alpha: number
+  ): void {
+    g.globalAlpha = alpha;
+    g.fillStyle = fill;
+    g.beginPath();
+    g.moveTo(ox + nx * halfMuzzle, oy + ny * halfMuzzle);
+    g.lineTo(tipX + nx * halfTip, tipY + ny * halfTip);
+    g.lineTo(tipX - nx * halfTip, tipY - ny * halfTip);
+    g.lineTo(ox - nx * halfMuzzle, oy - ny * halfMuzzle);
+    g.closePath();
+    g.fill();
+  }
+
+  /** Distance from (x,y) along the unit vector (fx,fy) to the arena edge. */
+  private wallDistance(x: number, y: number, fx: number, fy: number): number {
+    let t = Infinity;
+    if (fx > 0) t = Math.min(t, (this.width - x) / fx);
+    else if (fx < 0) t = Math.min(t, -x / fx);
+    if (fy > 0) t = Math.min(t, (this.height - y) / fy);
+    else if (fy < 0) t = Math.min(t, -y / fy);
+    return t === Infinity ? this.width : t;
+  }
+
   private drawPlayer(g: CanvasRenderingContext2D): void {
     const speed = Math.hypot(this.pvx, this.pvy) / MAX_SPEED;
     const hot = this.booster.active;
@@ -1854,7 +2199,7 @@ export class DodgeGame extends BaseGame {
       // discover it by accident. Faint enough that a bullet crossing it still
       // reads at full strength, and it is under the bullets anyway.
       g.globalAlpha = alpha * (0.09 + 0.04 * Math.sin(pk.age * 3 + pk.bob));
-      g.fillStyle = CAN_BODY;
+      g.fillStyle = pk.kind === PICK_LASER ? LASER_CELL_BODY : CAN_BODY;
       g.beginPath();
       g.arc(pk.x, y, PICKUP_GRAB_R + BODY_R, 0, TAU);
       g.fill();
@@ -1869,8 +2214,66 @@ export class DodgeGame extends BaseGame {
 
       g.translate(pk.x, y);
       g.scale(scale, scale);
-      this.drawCan(g);
+      if (pk.kind === PICK_LASER) this.drawLaserIcon(g, LASER_CELL_BODY, LASER_CELL_TRIM, LASER_CORE);
+      else this.drawCan(g);
       g.restore();
+    }
+  }
+
+  /**
+   * The laser mark: a bolt firing to the right, with two speed lines behind it.
+   *
+   * Used for both the pickup on the floor and the charge indicator, so that
+   * what is collected and what is held are visibly the same object. The
+   * silhouette is a pointed dart where every hazard in this game is a disc, so
+   * it is told apart before its colour has been read at all.
+   *
+   * Drawn around the origin at roughly 26x16, ready to be translated and
+   * scaled by the caller.
+   */
+  private drawLaserIcon(
+    g: CanvasRenderingContext2D,
+    body: string,
+    trim: string,
+    core: string | null
+  ): void {
+    g.lineJoin = "round";
+    g.lineCap = "round";
+
+    // Speed lines: the icon reads as "in flight" rather than as an arrowhead.
+    g.strokeStyle = trim;
+    g.lineWidth = 2.2;
+    g.beginPath();
+    g.moveTo(-12.5, -4.6);
+    g.lineTo(-7.5, -4.6);
+    g.moveTo(-13.5, 4.6);
+    g.lineTo(-8.5, 4.6);
+    g.stroke();
+
+    // The bolt: a notched tail so it reads as fired, not as a signpost.
+    g.beginPath();
+    g.moveTo(13, 0);
+    g.lineTo(3.5, -6.4);
+    g.lineTo(-6.5, -6.4);
+    g.lineTo(-2, 0);
+    g.lineTo(-6.5, 6.4);
+    g.lineTo(3.5, 6.4);
+    g.closePath();
+    g.fillStyle = body;
+    g.fill();
+    g.strokeStyle = trim;
+    g.lineWidth = 2;
+    g.stroke();
+
+    // Hot slit down the middle. Skipped when the icon is dead, which is most of
+    // what makes the spent state read as spent.
+    if (core) {
+      g.strokeStyle = core;
+      g.lineWidth = 2;
+      g.beginPath();
+      g.moveTo(-1.5, 0);
+      g.lineTo(7.5, 0);
+      g.stroke();
     }
   }
 
@@ -1966,10 +2369,34 @@ export class DodgeGame extends BaseGame {
     text(g, "+FUEL", x + r, GAUGE_Y - 36, FUEL_LABEL);
   }
 
+  /**
+   * The charge, drawn under the fuel gauge because it is the same kind of
+   * thing: a resource that is spent and refilled off the floor.
+   *
+   * Loaded it is a solid blue cell; spent it is the same outline, empty. Not
+   * hidden when empty — the player has to be able to see that the slot exists
+   * and is waiting, which is what makes a cell on the floor worth crossing for.
+   */
+  private drawLaserCharge(g: CanvasRenderingContext2D, cx: number, cy: number): void {
+    const loaded = this.laserCharges > 0;
+    g.save();
+    g.translate(cx, cy);
+    g.scale(0.86, 0.86);
+    if (loaded) {
+      this.drawLaserIcon(g, LASER_CELL_BODY, LASER_CELL_TRIM, LASER_CORE);
+    } else {
+      // The same mark, drained of colour rather than removed. An empty slot
+      // that vanishes gives the player nothing to notice refilling.
+      this.drawLaserIcon(g, C_LASER_OFF, C_LASER_OFF_TRIM, null);
+    }
+    g.restore();
+  }
+
   protected onRenderOverlay(g: CanvasRenderingContext2D): void {
     const gx = this.width - GAUGE_INSET;
     this.booster.render(g, gx, GAUGE_Y, GAUGE_W, GAUGE_H, ACCENT);
     if (this.fuelFlash > 0) this.drawFuelFlash(g, gx);
+    this.drawLaserCharge(g, gx + GAUGE_W / 2, GAUGE_Y + GAUGE_H + 22);
 
     if (this.bannerT <= 0) return;
     const k = this.bannerT / BANNER_TIME;

@@ -8,6 +8,7 @@ import { formatScore, sanitizeNickname } from "@/lib/format";
 import { noteAccountBest } from "@/lib/accountBest";
 import { getSavedNickname, saveNickname } from "@/lib/localBest";
 import { loginUrl } from "@/lib/talk";
+import { COARSE_POINTER, useMediaQuery } from "@/lib/useMediaQuery";
 import { usePlayer } from "@/lib/usePlayer";
 
 interface GameOverProps {
@@ -58,13 +59,28 @@ export default function GameOver({
   const [state, setState] = useState<SubmitState>({ kind: "idle" });
   const inputRef = useRef<HTMLInputElement | null>(null);
 
+  /*
+   * Focus the field so a player can type straight into it — on a keyboard.
+   *
+   * Never on a touch device. There the focus summons the soft keyboard, which
+   * on a phone in landscape is most of the screen: the score, the panel and the
+   * 다시하기 button all go behind it before the player has read any of them.
+   * That is a bad trade even for a first-timer who does have to type, and for
+   * the common case — a returning player whose nickname is already filled in
+   * from the last run — it costs a dismissal to reach a button they could have
+   * pressed straight away.
+   *
+   * On a desktop there is no keyboard to get in the way and the focus is worth
+   * having: it makes Enter submit.
+   */
+  const isTouch = useMediaQuery(COARSE_POINTER);
   useEffect(() => {
-    // Focus the field so a player can type straight into it, but only after the
-    // panel has animated in. Nothing to focus when it registers by itself.
-    if (auto || me.kind === "loading") return;
+    // Only after the panel has animated in, and nothing to focus when the run
+    // registers by itself.
+    if (auto || me.kind === "loading" || isTouch) return;
     const id = requestAnimationFrame(() => inputRef.current?.focus());
     return () => cancelAnimationFrame(id);
-  }, [auto, me.kind]);
+  }, [auto, me.kind, isTouch]);
 
   /**
    * Posts the run. `name` is only read for a guest; the server names a member
@@ -162,185 +178,191 @@ export default function GameOver({
 
   return (
     <div className="absolute inset-0 z-20 flex p-3 backdrop-blur-[3px] bg-white/75 sm:p-4">
-      <div className="panel-compact animate-pop card m-auto max-h-full w-full max-w-sm overflow-y-auto overscroll-contain px-7 py-7 text-center">
-        {isNewRecord ? (
-          <>
-            <div className="panel-emoji animate-bob text-4xl" aria-hidden="true">
-              🎉
-            </div>
-            <p className="animate-shimmer mt-2 text-xl">신기록 달성!</p>
-          </>
-        ) : (
-          <>
-            <div className="panel-emoji text-4xl" aria-hidden="true">
-              😵
-            </div>
-            <p className="mt-2 text-xl text-ink">게임 오버</p>
-          </>
-        )}
-
-        <p className="mt-6 text-[11px] text-ink-faint">SCORE</p>
-        <p className="panel-score num text-5xl font-semibold leading-none" style={{ color: accent }}>
-          {formatScore(score)}
-        </p>
-        <p className="num mt-3 text-xs text-ink-faint">BEST {formatScore(best)}</p>
-
-        {/*
-          Nothing is drawn here until the session cookie has been read. Showing
-          the nickname field meanwhile would put a signed-in player halfway
-          through typing a name they do not need, and then take the field away.
-        */}
-        {me.kind === "loading" ? (
-          <div className="mt-7 h-[92px]" aria-hidden="true" />
-        ) : submitted ? (
-          <div
-            className="mt-7 rounded-2xl px-4 py-5"
-            style={{ backgroundColor: accent + "14" }}
-          >
-            <p className="text-xs text-ink-dim">
-              <span className="text-ink">
-                {auto && me.kind === "member"
-                  ? me.player.nickname
-                  : sanitizeNickname(nickname, NICKNAME_MAX)}
-              </span>{" "}
-              등록 완료!
-            </p>
-            {state.rank > 0 ? (
-              <p className="num mt-1 text-3xl font-semibold" style={{ color: accent }}>
-                {state.rank}위
-              </p>
-            ) : (
-              // rank 0 means the row did not make the top 100. Saying "0위"
-              // would read as a bug; saying nothing would read as a failure.
-              <p className="mt-1.5 text-xs text-ink-faint">아직 100위 안에는 못 들었어요</p>
-            )}
-          </div>
-        ) : auto ? (
-          <div className="mt-7 rounded-2xl px-4 py-5" style={{ backgroundColor: accent + "14" }}>
-            {zeroSkipped ? (
-              <p className="text-xs leading-relaxed text-ink-dim">
-                0점은 등록하지 않아요.
-                <br />
-                <span className="text-ink-faint">한 판 더 해볼까요?</span>
-              </p>
-            ) : state.kind === "error" ? (
+      <div className="panel-shell panel-compact animate-pop card m-auto max-h-full w-full max-w-sm overflow-y-auto overscroll-contain px-7 py-7 text-center">
+        <div className="panel-cols">
+          <div className="panel-col">
+            {isNewRecord ? (
               <>
-                <p className="text-[11px] leading-relaxed text-direction">{state.message}</p>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setState({ kind: "sending" });
-                    void submit("");
-                  }}
-                  className="pill mt-3 px-5 py-2 text-xs text-white transition-transform active:scale-95"
-                  style={{ backgroundColor: accent }}
-                >
-                  다시 시도
-                </button>
+                <div className="panel-emoji animate-bob text-4xl" aria-hidden="true">
+                  🎉
+                </div>
+                <p className="animate-shimmer mt-2 text-xl">신기록 달성!</p>
               </>
-            ) : state.kind === "unavailable" ? (
-              <p className="text-[11px] leading-relaxed text-ink-faint">
-                랭킹 서버가 아직 연결되지 않았어요. 최고 점수는 이 브라우저에 저장됩니다.
-              </p>
             ) : (
-              <p className="text-xs text-ink-dim">
-                <span className="text-ink">
-                  {me.kind === "member" ? me.player.nickname : ""}
-                </span>{" "}
-                이름으로 등록 중…
-              </p>
+              <>
+                <div className="panel-emoji text-4xl" aria-hidden="true">
+                  😵
+                </div>
+                <p className="mt-2 text-xl text-ink">게임 오버</p>
+              </>
             )}
+
+            <p className="mt-6 text-[11px] text-ink-faint">SCORE</p>
+            <p className="panel-score num text-5xl font-semibold leading-none" style={{ color: accent }}>
+              {formatScore(score)}
+            </p>
+            <p className="num mt-3 text-xs text-ink-faint">BEST {formatScore(best)}</p>
           </div>
-        ) : (
-          <div className="mt-7 text-left">
-            <label htmlFor="nickname" className="text-[11px] text-ink-faint">
-              닉네임 (최대 {NICKNAME_MAX}자)
-            </label>
-            <div className="mt-2 flex gap-2">
-              <input
-                id="nickname"
-                ref={inputRef}
-                value={nickname}
-                maxLength={NICKNAME_MAX}
-                placeholder="PLAYER"
-                onChange={(e) => {
-                  setNickname(e.target.value);
-                  if (state.kind === "error") setState({ kind: "idle" });
-                }}
-                onKeyDown={(e) => {
-                  // Arrow keys belong to the game; stop them bubbling to it.
-                  e.stopPropagation();
-                  if (e.key === "Enter") submitTyped();
-                }}
-                className="pill min-w-0 flex-1 border border-line bg-surface-2 px-4 py-2.5 text-sm text-ink outline-none transition-colors placeholder:text-ink-faint focus:border-primary"
-                autoComplete="off"
-                spellCheck={false}
-              />
+
+          <div className="panel-col panel-col-form">
+            {/*
+              Nothing is drawn here until the session cookie has been read. Showing
+              the nickname field meanwhile would put a signed-in player halfway
+              through typing a name they do not need, and then take the field away.
+            */}
+            {me.kind === "loading" ? (
+              <div className="mt-7 h-[92px]" aria-hidden="true" />
+            ) : submitted ? (
+              <div
+                className="mt-7 rounded-2xl px-4 py-5"
+                style={{ backgroundColor: accent + "14" }}
+              >
+                <p className="text-xs text-ink-dim">
+                  <span className="text-ink">
+                    {auto && me.kind === "member"
+                      ? me.player.nickname
+                      : sanitizeNickname(nickname, NICKNAME_MAX)}
+                  </span>{" "}
+                  등록 완료!
+                </p>
+                {state.rank > 0 ? (
+                  <p className="num mt-1 text-3xl font-semibold" style={{ color: accent }}>
+                    {state.rank}위
+                  </p>
+                ) : (
+                  // rank 0 means the row did not make the top 100. Saying "0위"
+                  // would read as a bug; saying nothing would read as a failure.
+                  <p className="mt-1.5 text-xs text-ink-faint">아직 100위 안에는 못 들었어요</p>
+                )}
+              </div>
+            ) : auto ? (
+              <div className="mt-7 rounded-2xl px-4 py-5" style={{ backgroundColor: accent + "14" }}>
+                {zeroSkipped ? (
+                  <p className="text-xs leading-relaxed text-ink-dim">
+                    0점은 등록하지 않아요.
+                    <br />
+                    <span className="text-ink-faint">한 판 더 해볼까요?</span>
+                  </p>
+                ) : state.kind === "error" ? (
+                  <>
+                    <p className="text-[11px] leading-relaxed text-direction">{state.message}</p>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setState({ kind: "sending" });
+                        void submit("");
+                      }}
+                      className="pill mt-3 px-5 py-2 text-xs text-white transition-transform active:scale-95"
+                      style={{ backgroundColor: accent }}
+                    >
+                      다시 시도
+                    </button>
+                  </>
+                ) : state.kind === "unavailable" ? (
+                  <p className="text-[11px] leading-relaxed text-ink-faint">
+                    랭킹 서버가 아직 연결되지 않았어요. 최고 점수는 이 브라우저에 저장됩니다.
+                  </p>
+                ) : (
+                  <p className="text-xs text-ink-dim">
+                    <span className="text-ink">
+                      {me.kind === "member" ? me.player.nickname : ""}
+                    </span>{" "}
+                    이름으로 등록 중…
+                  </p>
+                )}
+              </div>
+            ) : (
+              <div className="mt-7 text-left">
+                <label htmlFor="nickname" className="text-[11px] text-ink-faint">
+                  닉네임 (최대 {NICKNAME_MAX}자)
+                </label>
+                <div className="mt-2 flex gap-2">
+                  <input
+                    id="nickname"
+                    ref={inputRef}
+                    value={nickname}
+                    maxLength={NICKNAME_MAX}
+                    placeholder="PLAYER"
+                    onChange={(e) => {
+                      setNickname(e.target.value);
+                      if (state.kind === "error") setState({ kind: "idle" });
+                    }}
+                    onKeyDown={(e) => {
+                      // Arrow keys belong to the game; stop them bubbling to it.
+                      e.stopPropagation();
+                      if (e.key === "Enter") submitTyped();
+                    }}
+                    className="pill min-w-0 flex-1 border border-line bg-surface-2 px-4 py-2.5 text-sm text-ink outline-none transition-colors placeholder:text-ink-faint focus:border-primary"
+                    autoComplete="off"
+                    spellCheck={false}
+                  />
+                  <button
+                    type="button"
+                    onClick={submitTyped}
+                    disabled={state.kind === "sending"}
+                    className="pill shrink-0 px-5 py-2.5 text-sm text-white transition-transform active:scale-95 disabled:opacity-50"
+                    style={{ backgroundColor: accent }}
+                  >
+                    {state.kind === "sending" ? "등록 중" : "등록"}
+                  </button>
+                </div>
+
+                {state.kind === "error" ? (
+                  <p className="mt-2 px-1 text-[11px] text-direction">{state.message}</p>
+                ) : null}
+                {state.kind === "unavailable" ? (
+                  <p className="mt-2 px-1 text-[11px] leading-relaxed text-ink-faint">
+                    랭킹 서버가 아직 연결되지 않았어요. 최고 점수는 이 브라우저에 저장됩니다.
+                  </p>
+                ) : null}
+
+                {/*
+                  Offered to a guest only, and only as a line of text under the
+                  field — not as a second button competing with 등록. Signing in
+                  leaves the page, so a player who just finished a run must not be
+                  nudged into it before their score is recorded.
+                */}
+                {me.kind === "guest" ? (
+                  <p className="mt-3 px-1 text-[11px] leading-relaxed text-ink-faint">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        window.location.href = loginUrl();
+                      }}
+                      className="text-primary underline decoration-primary/30 underline-offset-2"
+                    >
+                      로그인
+                    </button>
+                    하면 다음부터 닉네임으로 자동 등록돼요.
+                  </p>
+                ) : null}
+              </div>
+            )}
+
+            <div className="panel-actions mt-6 grid gap-2">
               <button
                 type="button"
-                onClick={submitTyped}
-                disabled={state.kind === "sending"}
-                className="pill shrink-0 px-5 py-2.5 text-sm text-white transition-transform active:scale-95 disabled:opacity-50"
+                onClick={onRestart}
+                className="pill px-5 py-3 text-sm text-white transition-transform hover:scale-[1.02] active:scale-95"
                 style={{ backgroundColor: accent }}
               >
-                {state.kind === "sending" ? "등록 중" : "등록"}
+                다시하기
               </button>
-            </div>
-
-            {state.kind === "error" ? (
-              <p className="mt-2 px-1 text-[11px] text-direction">{state.message}</p>
-            ) : null}
-            {state.kind === "unavailable" ? (
-              <p className="mt-2 px-1 text-[11px] leading-relaxed text-ink-faint">
-                랭킹 서버가 아직 연결되지 않았어요. 최고 점수는 이 브라우저에 저장됩니다.
-              </p>
-            ) : null}
-
-            {/*
-              Offered to a guest only, and only as a line of text under the
-              field — not as a second button competing with 등록. Signing in
-              leaves the page, so a player who just finished a run must not be
-              nudged into it before their score is recorded.
-            */}
-            {me.kind === "guest" ? (
-              <p className="mt-3 px-1 text-[11px] leading-relaxed text-ink-faint">
-                <button
-                  type="button"
-                  onClick={() => {
-                    window.location.href = loginUrl();
-                  }}
-                  className="text-primary underline decoration-primary/30 underline-offset-2"
+              <div className="grid grid-cols-2 gap-2">
+                <Link
+                  href={`/ranking?game=${gameId}`}
+                  className="pill border border-line bg-surface px-4 py-3 text-sm text-ink-dim transition-colors hover:border-line-strong hover:text-ink"
                 >
-                  로그인
-                </button>
-                하면 다음부터 닉네임으로 자동 등록돼요.
-              </p>
-            ) : null}
-          </div>
-        )}
-
-        <div className="panel-actions mt-6 grid gap-2">
-          <button
-            type="button"
-            onClick={onRestart}
-            className="pill px-5 py-3 text-sm text-white transition-transform hover:scale-[1.02] active:scale-95"
-            style={{ backgroundColor: accent }}
-          >
-            다시하기
-          </button>
-          <div className="grid grid-cols-2 gap-2">
-            <Link
-              href={`/ranking?game=${gameId}`}
-              className="pill border border-line bg-surface px-4 py-3 text-sm text-ink-dim transition-colors hover:border-line-strong hover:text-ink"
-            >
-              랭킹 보기
-            </Link>
-            <Link
-              href="/"
-              className="pill border border-line bg-surface px-4 py-3 text-sm text-ink-dim transition-colors hover:border-line-strong hover:text-ink"
-            >
-              게임 선택
-            </Link>
+                  랭킹 보기
+                </Link>
+                <Link
+                  href="/"
+                  className="pill border border-line bg-surface px-4 py-3 text-sm text-ink-dim transition-colors hover:border-line-strong hover:text-ink"
+                >
+                  게임 선택
+                </Link>
+              </div>
+            </div>
           </div>
         </div>
       </div>

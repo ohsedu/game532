@@ -153,8 +153,16 @@ export function createSpiral(): SpiralEmitter {
  * Deliberately not a Bullet: it shares no field with one, so no loop can ever
  * treat a can as a hazard by accident.
  */
+/** Pickup kinds. Numeric for the same reason bullet kinds are. */
+export const PICK_FUEL = 0;
+export const PICK_LASER = 1;
+
+export type PickupKind = 0 | 1;
+
 export interface Pickup {
   active: boolean;
+  /** Fuel can or laser cell. */
+  kind: PickupKind;
   x: number;
   y: number;
   /** Seconds of life left. Drives the fade-out, so it is never snapped away. */
@@ -166,7 +174,7 @@ export interface Pickup {
 }
 
 function blankPickup(): Pickup {
-  return { active: false, x: 0, y: 0, life: 0, age: 0, bob: 0 };
+  return { active: false, kind: PICK_FUEL, x: 0, y: 0, life: 0, age: 0, bob: 0 };
 }
 
 export function createPickupPool(capacity: number): Pickup[] {

@@ -32,3 +32,9 @@ export function useMediaQuery(query: string): boolean {
  */
 export const PORTRAIT_PHONE =
   "(orientation: portrait) and (max-width: 767px) and (pointer: coarse)";
+
+/**
+ * A device pointed at with a finger — which is the same set of devices that
+ * answer a focused text field by throwing a keyboard over half the screen.
+ */
+export const COARSE_POINTER = "(pointer: coarse)";
