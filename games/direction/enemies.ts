@@ -1,9 +1,6 @@
 import { roundRect, text, type TextOptions, withAlpha } from "@/games/core/draw";
 import { GAME_HEIGHT, GAME_WIDTH } from "@/types/game";
 import {
-  AMBER,
-  AMBER_DARK,
-  CARD,
   dropShadow,
   INK,
   PLAYER_X,
@@ -21,22 +18,36 @@ import { DIR_INFO, type Dir } from "./facing";
 export type EnemyPhase = "telegraph" | "approach" | "strike";
 
 /**
- * Seconds of telegraph still remaining when a feint commits to its real side.
- * The post-reveal window is this plus the whole approach (>=0.39s even at the
- * hardest ramp), so a revealed feint still leaves more than 0.8s — which is
- * what an eight-way read needs, not the four-way read this was tuned for.
+ * Seconds the directional flare stays at full strength, and the fade that ends
+ * it.
+ *
+ * The flare is a tutorial, not a permanent crutch. It names the side before the
+ * enemy is even moving, so while it is up the player answers a marker rather
+ * than an enemy — exactly what is wanted for the first dozen seconds, when all
+ * eight sides have to be learned at once, and exactly what made the rest of the
+ * run free. Past the fade the only thing that says where a strike comes from is
+ * the enemy itself, closing.
+ *
+ * A fade, not a switch: a cue that vanishes between one spawn and the next
+ * reads as a bug, and two seconds of visibly weakening flare are what let the
+ * player feel the rule change while both halves of it are still on screen. The
+ * caller announces it in words at the same moment.
  */
-export const FEINT_REVEAL = 0.42;
+export const FLARE_FULL = 12;
+export const FLARE_FADE = 2;
+
+/** 1 while the flare is the answer, 0 once the player is on their own. */
+export function flareAlpha(elapsed: number): number {
+  if (elapsed <= FLARE_FULL) return 1;
+  const k = (elapsed - FLARE_FULL) / FLARE_FADE;
+  return k >= 1 ? 0 : 1 - k;
+}
 
 export interface Enemy {
   active: boolean;
   phase: EnemyPhase;
   /** Side the strike really comes from; the facing that parries it. */
   dir: Dir;
-  /** Side the flare is showing. Differs from `dir` only while a feint is
-   *  still uncommitted, and is amber for the whole uncommitted stretch. */
-  flareDir: Dir;
-  feint: boolean;
   /** Telegraph phase: seconds left. Strike phase: seconds of grace left. */
   t: number;
   /** Full telegraph length, kept for the flare's urgency ramp. */
@@ -68,8 +79,6 @@ export function blankEnemy(): Enemy {
     active: false,
     phase: "telegraph",
     dir: "left",
-    flareDir: "left",
-    feint: false,
     t: 0,
     telegraph: 1,
     speed: 0,
@@ -82,13 +91,6 @@ export function blankEnemy(): Enemy {
   };
 }
 
-/** True while a feint is still lying about (or simply withholding) its side. */
-export function isUncommitted(e: Enemy): boolean {
-  return e.feint && e.t > FEINT_REVEAL;
-}
-
-const FEINT_DASH = [8, 7];
-const NO_DASH: number[] = [];
 const BAR_THICK = 14;
 /** Distance of the edge capsule from the arena edge. */
 const BAR_INSET = 6;
@@ -147,7 +149,11 @@ const EDGE_BARS: Record<Dir, readonly EdgeBar[]> = {
 };
 
 /** Reused so the flare's glyph never allocates an options literal per frame. */
-const MARK_OPT: TextOptions = { size: 26, color: AMBER_DARK, alpha: 1 };
+const MARK_OPT: TextOptions = { size: 26, color: "#ffffff", alpha: 1 };
+/** Fixed-alpha fills, resolved once: `withAlpha` builds an rgba string, and
+ *  these two sit on a per-enemy path inside onRender. */
+const BUBBLE_FILL = withAlpha(ROSE_DEEP, 0.94);
+const EMPHASIS_RIM = withAlpha(ROSE_SOFT, 0.9);
 /** Fixed wobble for the trail chips: a trail, not a straight hard streak. */
 const TRAIL_WOBBLE = [3.2, -3.6, 2.4, -1.8];
 
@@ -166,6 +172,9 @@ function edgeRoom(sx: number, sy: number, vx: number, vy: number): number {
  * Warning flare: rounded capsules at the arena edges for peripheral vision, a
  * warning bubble that swells at the exact point the enemy will appear, and a
  * ring around it that unwinds like a fuse.
+ *
+ * Opening window only. The caller passes the fade in through `globalAlpha` and
+ * stops calling this at all once it reaches zero.
  */
 export function drawTelegraph(
   g: CanvasRenderingContext2D,
@@ -173,15 +182,12 @@ export function drawTelegraph(
   px: number,
   py: number
 ): void {
-  // The caller dims a flare that is no longer the story (everything but the
-  // fatal side, once the run is over), so the three alphas that set themselves
-  // instead of multiplying have to fold that in by hand.
+  // The caller hands its own alpha in through globalAlpha — the fade, and the
+  // dimming of every flare that is no longer the story once the run is over —
+  // so the three alphas that SET themselves instead of multiplying have to fold
+  // that in by hand.
   const base = g.globalAlpha;
-  const lying = isUncommitted(e);
-  const shown = lying ? e.flareDir : e.dir;
-  const info = DIR_INFO[shown];
-  const color = lying ? AMBER : ROSE_DEEP;
-  const outline = lying ? AMBER_DARK : ROSE_DARK;
+  const info = DIR_INFO[e.dir];
   // Urgency: brighter and faster as the strike nears. Squaring the phase makes
   // the flicker accelerate, which reads as "now" without needing a number.
   const k = 1 - Math.max(0, e.t) / Math.max(0.01, e.telegraph);
@@ -191,15 +197,15 @@ export function drawTelegraph(
   g.save();
 
   // Edge capsules — visible even when the player is staring at another side.
-  const bars = EDGE_BARS[shown];
+  const bars = EDGE_BARS[e.dir];
   const pad = 9;
-  g.fillStyle = withAlpha(color, alpha * 0.2);
+  g.fillStyle = withAlpha(ROSE_DEEP, alpha * 0.2);
   for (let i = 0; i < bars.length; i++) {
     const b = bars[i];
     roundRect(g, b.x - pad, b.y - pad, b.w + pad * 2, b.h + pad * 2, (BAR_THICK + pad * 2) / 2);
     g.fill();
   }
-  g.fillStyle = withAlpha(color, Math.min(1, 0.35 + alpha * 0.65));
+  g.fillStyle = withAlpha(ROSE_DEEP, Math.min(1, 0.35 + alpha * 0.65));
   for (let i = 0; i < bars.length; i++) {
     const b = bars[i];
     roundRect(g, b.x, b.y, b.w, b.h, BAR_THICK / 2);
@@ -220,42 +226,30 @@ export function drawTelegraph(
   g.save();
   g.translate(sx, sy);
   g.rotate(info.angle + Math.PI);
-  if (lying) g.setLineDash(FEINT_DASH);
   for (let i = 0; i < 3; i++) {
     const off = -span * 0.639 + i * step - (1 - k) * slide;
     const a = alpha * (1 - i * 0.24);
     const cw = nose * 1.5;
     const ch = half * 1.6;
     roundRect(g, off - cw * 0.5, -ch * 0.5, cw, ch, Math.min(cw, ch) * 0.5);
-    if (lying) {
-      // Hollow + dashed: the shape itself says "not committed".
-      g.strokeStyle = withAlpha(color, a);
-      g.lineWidth = 2.5;
-      g.stroke();
-    } else {
-      g.fillStyle = withAlpha(color, a);
-      g.fill();
-    }
+    g.fillStyle = withAlpha(ROSE_DEEP, a);
+    g.fill();
   }
-  g.setLineDash(NO_DASH);
   g.restore();
 
   // Warning bubble: swells toward the strike so "soon" is a size, not a hue.
-  // Solid bubble = this side has committed. Hollow dashed bubble = it has not.
   const r = 15 + 13 * k;
   dropShadow(g, sx, sy + r * 0.6, r * 0.85, r * 0.3, 0.1 * base);
-  softHalo(g, sx, sy, r + 9, color, (0.16 + 0.14 * pulse) * base);
-  g.fillStyle = lying ? CARD : withAlpha(color, 0.94);
+  softHalo(g, sx, sy, r + 9, ROSE_DEEP, (0.16 + 0.14 * pulse) * base);
+  g.fillStyle = BUBBLE_FILL;
   g.beginPath();
   g.arc(sx, sy, r, 0, TAU);
   g.fill();
-  if (lying) g.setLineDash(FEINT_DASH);
   g.lineWidth = 3.5;
-  g.strokeStyle = lying ? color : "#ffffff";
+  g.strokeStyle = "#ffffff";
   g.stroke();
-  g.setLineDash(NO_DASH);
   g.lineWidth = 2;
-  g.strokeStyle = withAlpha(outline, 0.4 + 0.4 * k);
+  g.strokeStyle = withAlpha(ROSE_DARK, 0.4 + 0.4 * k);
   g.beginPath();
   g.arc(sx, sy, r + 3, 0, TAU);
   g.stroke();
@@ -263,17 +257,16 @@ export function drawTelegraph(
   // Fuse ring: unwinds to nothing exactly when the enemy appears.
   g.lineCap = "round";
   g.lineWidth = 5;
-  g.strokeStyle = withAlpha(color, 0.4 + 0.5 * k);
+  g.strokeStyle = withAlpha(ROSE_DEEP, 0.4 + 0.5 * k);
   g.beginPath();
   g.arc(sx, sy, r + 10, -Math.PI / 2, -Math.PI / 2 + (1 - k) * TAU);
   g.stroke();
   g.lineCap = "butt";
   g.restore();
 
-  MARK_OPT.color = lying ? AMBER_DARK : "#ffffff";
   MARK_OPT.size = r * 1.15;
-  MARK_OPT.alpha = (lying ? 0.7 + 0.3 * pulse : 0.85) * base;
-  text(g, lying ? "?" : "!", sx, sy + 1, MARK_OPT);
+  MARK_OPT.alpha = 0.85 * base;
+  text(g, "!", sx, sy + 1, MARK_OPT);
 }
 
 /**
@@ -291,7 +284,7 @@ export function drawEnemy(g: CanvasRenderingContext2D, e: Enemy, emphasis: numbe
   const mx = -info.vx;
   const my = -info.vy;
   // Squash along the travel axis: fast things stretch.
-  const stretch = 1 + Math.min(0.24, e.speed * 0.00036);
+  const stretch = 1 + Math.min(0.24, e.speed * 0.0008);
   const rx = 18.5 * stretch;
   const ry = 15.5 / (1 + (stretch - 1) * 0.5);
 
@@ -299,7 +292,7 @@ export function drawEnemy(g: CanvasRenderingContext2D, e: Enemy, emphasis: numbe
   g.translate(e.x, e.y);
 
   // Trail chips. Spacing tracks speed, so late-game rushers read as faster.
-  const gap = 13 + e.speed * 0.022;
+  const gap = 13 + e.speed * 0.05;
   for (let i = 0; i < 4; i++) {
     const back = 18 + i * gap;
     g.globalAlpha = base * (0.3 - i * 0.062);
@@ -330,7 +323,7 @@ export function drawEnemy(g: CanvasRenderingContext2D, e: Enemy, emphasis: numbe
     g.beginPath();
     g.ellipse(0, 0, rx + 6, ry + 6, 0, 0, TAU);
     g.stroke();
-    g.strokeStyle = withAlpha(ROSE_SOFT, 0.9);
+    g.strokeStyle = EMPHASIS_RIM;
     g.lineWidth = 2;
     g.beginPath();
     g.ellipse(0, 0, rx + 11, ry + 11, 0, 0, TAU);

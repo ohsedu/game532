@@ -9,11 +9,22 @@ export const FLOOR_Y = PLAYER_Y + 88;
  * Distance from the player at which an enemy materializes. Identical for every
  * side so approach time — and therefore the reaction window — never depends on
  * which direction the strike comes from.
+ *
+ * This is the board's ceiling rather than a preference. The player stands 322px
+ * below the top of the stage card, so a spawn ring any wider than this puts the
+ * "up" enemy off the board, and an enemy that is invisible for the first slice
+ * of its approach is worse than no warning at all — which is exactly what the
+ * flare fade cannot afford. The rest of the reading window is therefore bought
+ * with approach SPEED (see SPEED_START / SPEED_TOP in DirectionGame), not with
+ * more distance.
  */
-export const SPAWN_DIST = 300;
+export const SPAWN_DIST = 306;
 /**
  * Enemies resolve the instant they cross this radius. It is drawn as a ring so
- * the timing is something the player learns rather than guesses.
+ * the timing is something the player learns rather than guesses. It cannot
+ * shrink to buy more travel: the player's own blade already reaches 71px, and a
+ * strike ring inside the guard would resolve hits behind the thing meant to
+ * stop them.
  */
 export const STRIKE_DIST = 76;
 export const TRAVEL = SPAWN_DIST - STRIKE_DIST;
@@ -34,7 +45,6 @@ export const FLOOR = "#fdeef3";
 export const GRID = "rgba(91,95,221,0.06)";
 export const GRID_ROSE = "rgba(255,107,138,0.07)";
 export const SHADOW = "rgba(24,28,45,0.10)";
-export const SHADOW_DEEP = "rgba(24,28,45,0.16)";
 
 export const INK = "#22252d";
 export const INK_DIM = "#6d7280";
@@ -50,7 +60,8 @@ export const ROSE_DEEP = "#e12a55";
 export const ROSE_DARK = "#8e1233";
 export const ROSE_SOFT = "#ffd9e2";
 
-/** Feint flares only. A side that has not committed yet is never rose. */
+/** Reward accent: clutch banners, clutch confetti, the clutch wash. Nothing
+ *  that can end the run is ever amber. */
 export const AMBER = "#ffa62b";
 export const AMBER_DARK = "#a35a00";
 

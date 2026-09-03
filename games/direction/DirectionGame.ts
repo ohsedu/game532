@@ -45,25 +45,29 @@ import {
   blankEnemy,
   drawEnemy,
   drawTelegraph,
-  FEINT_REVEAL,
   type Enemy,
+  flareAlpha,
+  FLARE_FULL,
 } from "./enemies";
 import {
-  diagonalWeight,
   DIR_INFO,
   type Dir,
   dirFromAxes,
-  isDiagonal,
-  isVertical,
   octantDist,
+  pickChainDir,
   pickSpawnDir,
   pickSpawnDirExcept,
-  verticalWeight,
 } from "./facing";
 
 const POOL = 24;
-/** Purely a legibility cap; the strike guard already bounds real difficulty. */
-const MAX_INFLIGHT = 6;
+/**
+ * Purely a legibility cap; the strike guard already bounds real difficulty.
+ * Raised with the density: enemies live longer now (the approach is slower on
+ * purpose) and arrive closer together, so six was starting to clip waves the
+ * guard had already judged answerable — and a cap that bites before the guard
+ * does is a cap that hides where the real limit is.
+ */
+const MAX_INFLIGHT = 8;
 
 /** Turn tween. Short enough to feel instant, long enough to read as a snap. */
 const TURN_TIME = 0.09;
@@ -83,16 +87,18 @@ const HITSTOP = 0.05;
  * left on the clock.
  *
  * Taken from the approach timings rather than picked: the rush from spawn ring
- * to strike ring lasts TRAVEL/speed, which is 0.75s at the opening 300px/s and
- * bottoms out at 0.39s once speed maxes at 580. 0.28s sits under even that
- * floor, so a clutch is always a guard that arrived after the enemy was
- * already visibly closing — the last third of the rush, never the telegraph.
- * It is also roughly one human reaction time, so it is the latest a player can
- * commit and still be doing it on purpose.
+ * to strike ring lasts TRAVEL/speed, which is 1.35s at the opening 170px/s and
+ * bottoms out at 0.90s once speed maxes at 255. 0.28s sits well under even that
+ * floor, so a clutch is always a guard that arrived after the enemy was already
+ * visibly closing — the last third of the rush, never the telegraph. It is also
+ * roughly one human reaction time, so it is the latest a player can commit and
+ * still be doing it on purpose.
  *
- * In practice a competent opening run lands a third of them: the safe play is
- * to turn on the flare (~1.2s of lead, nowhere near clutch), so every clutch is
- * a deliberate wait, and waiting out ~75% of a 1.6s window is a real gamble.
+ * Unchanged by the flare fade, and it has to be. Past 14s a player cannot turn
+ * early even if they want to, because nothing says where to turn until the
+ * enemy is on the board; a clutch is then still what it always was — sitting on
+ * a side you have already read and letting it come — rather than the accident
+ * of an answer that arrived late.
  */
 const CLUTCH_LEAD = 0.28;
 
@@ -118,26 +124,40 @@ const DIAGONAL_COMPOSE = 0.12;
  */
 const RELEASE_GRACE = 0.14;
 
+/**
+ * One knob for the whole scoreboard.
+ *
+ * Every award is written at its original weight and scaled through this, so the
+ * ratios between a safe parry, a clutch and a deep-combo clutch can only be
+ * changed deliberately — there is no way to nudge one of them in isolation and
+ * let the others drift.
+ */
+const SCORE_SCALE = 1 / 20;
 /** Small and flat. A parry with time to spare keeps you alive, nothing more. */
-const NORMAL_SCORE = 25;
+const NORMAL_SCORE = 25 * SCORE_SCALE;
 /** Multiplied by the clutch multiplier. Only clutches are worth chasing. */
-const CLUTCH_BASE = 120;
+const CLUTCH_BASE = 120 * SCORE_SCALE;
 const MAX_MULT = 8;
 
 /**
  * Minimum spacing between two strikes that need the SAME facing — enough to
- * read two arrivals apart, no turn required. Raised alongside the turn gap:
- * with eight sides live, "same side twice" is now a genuine read rather than
- * the default assumption.
+ * read two arrivals apart, no turn required. Raised again with the flare fade:
+ * past 14s every arrival has to be FOUND on the board first, and two hits on
+ * one side are only readable as two if there is room to see them as two.
  */
-const SAME_DIR_GAP = 0.2;
+const SAME_DIR_GAP = 0.24;
 /**
  * Spacing for two strikes needing OPPOSITE facings, i.e. the most expensive
- * turn on the compass. Asymptotic to 0.36 — raised from the four-way tuning,
- * because an eight-way choice is a slower decision and shipping the old floor
- * would have made the late game a coin flip.
+ * turn on the compass. Asymptotic to 0.42.
+ *
+ * This floor went UP when the flare went away, not down. It used to buy a turn
+ * the player had already been told to make; it now has to buy the read as well.
+ * The spawn cadence below is deliberately pushed past what this allows, so this
+ * is the number that decides how crowded the late game gets — which means
+ * lowering it to fit more enemies in would not make the game harder, only
+ * unfair.
  */
-const TURN_GAP_START = 0.62;
+const TURN_GAP_START = 0.68;
 const TURN_GAP_RANGE = -0.26;
 const TURN_GAP_HALFLIFE = 50;
 
@@ -149,26 +169,63 @@ const FIRST_SPAWN_DELAY = 0.5;
 /** No strike may resolve before this, on top of the engine-wide grace. */
 const GRACE_MARGIN = 0.45;
 
-const CHAIN_START = 22;
-const CHAIN_SAME_GAP = 0.3;
-const CHAIN_ALT_GAP = 0.46;
-
-const FEINT_START = 45;
-/** A feint always gets a long telegraph; the reveal is what must be fair. */
-const FEINT_TELEGRAPH_MIN = 0.85;
+/**
+ * Approach speed in px/s, ramped linearly over SPEED_RAMP seconds.
+ *
+ * Slower than it used to be (300 -> 580), deliberately. Once the flare is gone
+ * the rush from the spawn ring to the strike ring is the ENTIRE warning, and
+ * TRAVEL / speed is exactly how long the player gets to read it: 1.35s at the
+ * opening, 1.22s at the moment the flare finishes fading, 0.90s at top speed.
+ * Every one of those is longer than the old telegraph and rush put together at
+ * the same point in the run, which is what buys the right to take the flare
+ * away — the difficulty is reading the enemy, never being denied time to.
+ *
+ * The distance half of that trade is capped by the board (see SPAWN_DIST), so
+ * speed is the knob the reading window is actually bought with.
+ */
+const SPEED_START = 170;
+const SPEED_TOP = 255;
+const SPEED_RAMP = 65;
 
 /**
- * The very first strike from a newly opened tier gets a full-length telegraph.
- * The player has spent half a minute being taught which sides exist; the moment
- * that stops being true must not also be the moment they die. The diagonals get
- * the longer one — they are the only tier that changes the input, not just the
- * answer.
+ * Requested spawn interval, before the guard has its say.
+ *
+ * Pushed hard: the request bottoms out near 0.27s, which is BELOW the closest
+ * spacing the scheduling guard will ever allow between two strikes. That is the
+ * intent — the late game is a spawner asking for more waves than the guard will
+ * pass, so density ends up set by what a player can actually answer and never
+ * by a timer somebody picked.
  */
-const FIRST_VERTICAL_TELEGRAPH = 1.05;
-const FIRST_DIAGONAL_TELEGRAPH = 1.2;
+const SPAWN_SLOW = 0.9;
+const SPAWN_FAST = 0.36;
+const SPAWN_RAMP = 26;
 
-/** Pre-built so a parry never allocates a string mid-frame. */
-const CLUTCH_LABELS = ["+120", "+240", "+360", "+480", "+600", "+720", "+840", "+960"];
+/**
+ * Bursts: several sides in quick succession, which is where the fun is.
+ *
+ * They start early — a burst under the flare is how a player learns that the
+ * answer can change twice in a second while the answer is still being shown to
+ * them — and they become the common case rather than a late-run event. Links
+ * are at least CHAIN_MIN_STEPS apart on the compass, so a burst is several
+ * reads instead of one facing held through two arrivals.
+ */
+const CHAIN_START = 6;
+const CHAIN_CHANCE_START = 0.25;
+const CHAIN_CHANCE_RANGE = 0.5;
+const CHAIN_CHANCE_HALFLIFE = 24;
+const CHAIN_GAP = 0.26;
+const CHAIN_MIN_STEPS = 2;
+
+/**
+ * Pre-built at module load so a parry never allocates a string mid-frame — and
+ * built FROM the score constants rather than typed out next to them, so a label
+ * can never claim a number the game does not actually pay.
+ */
+const CLUTCH_LABELS: string[] = [];
+for (let i = 1; i <= MAX_MULT; i++) {
+  const v = CLUTCH_BASE * i;
+  CLUTCH_LABELS.push("+" + (Number.isInteger(v) ? v : v.toFixed(2)));
+}
 const LOST_LABELS = [
   "LOST x1",
   "LOST x2",
@@ -180,7 +237,8 @@ const LOST_LABELS = [
   "LOST x8",
 ];
 const COMBO_LABELS = ["x1", "x2", "x3", "x4", "x5", "x6", "x7", "x8"];
-const SAFE_LABEL = "SAFE +25";
+const SAFE_LABEL =
+  "SAFE +" + (Number.isInteger(NORMAL_SCORE) ? NORMAL_SCORE : NORMAL_SCORE.toFixed(2));
 const CLUTCH_BANNER = "CLUTCH";
 const BREAK_BANNER = "COMBO BROKEN";
 /** Just outside the strike ring, where the eye already is during a parry. */
@@ -190,16 +248,33 @@ const OPENING_HINT = "ARROW KEYS TURN — FACE THE STRIKE";
 const OPENING_HINT_TOUCH = "TAP TOWARD THE STRIKE";
 /** The scoring rule is not discoverable by playing safely, so it is stated. */
 const CLUTCH_HINT = "PARRY LATE FOR CLUTCH — ONLY CLUTCH BUILDS COMBO";
-/** Shown once per tier. A rule that changes mid-run and says nothing is
- *  indistinguishable from a rule that was never fair. */
-const VERTICAL_HINT = "UP AND DOWN ARE LIVE NOW";
-const DIAGONAL_HINT = "DIAGONALS ARE LIVE — HOLD TWO ARROWS";
-const DIAGONAL_HINT_TOUCH = "DIAGONALS ARE LIVE — TAP THE CORNERS";
+/**
+ * Said once, the moment the flare starts fading. A rule that changes mid-run
+ * and says nothing is indistinguishable from a rule that was never fair — and
+ * this is the only rule change a run has left, now that all eight sides are
+ * live from the first spawn.
+ */
+const FLARE_GONE_HINT = "WARNINGS ARE FADING — READ THE ENEMY ITSELF";
 
 const RING_DASH = [7, 12];
 const NO_DASH: number[] = [];
 /** Eight notches, one per facing. Hoisted: the render loop only reads it. */
 const OCTANT_ANGLE = Math.PI / 4;
+
+/**
+ * Every stroke/fill colour on the per-frame path whose alpha does not change.
+ *
+ * `withAlpha` builds an rgba string, so calling it with a literal alpha inside
+ * onRender hands the collector a fresh string every frame — once per approaching
+ * enemy for the lane line. These are the same values, resolved once at module
+ * load. The ones left as live `withAlpha` calls below are the ones whose alpha
+ * is driven by a flash or a distance and genuinely cannot be precomputed.
+ */
+const FLOOR_EDGE = withAlpha(ROSE, 0.18);
+const FLOOR_GLOW = withAlpha(ROSE, 0.07);
+const LANE_LINE = withAlpha(ROSE, 0.13);
+const RING_DASH_INK = withAlpha(ROSE, 0.45);
+const NOTCH_INK = withAlpha(INK_FAINT, 0.45);
 
 interface Popup {
   active: boolean;
@@ -258,9 +333,8 @@ export class DirectionGame extends BaseGame {
   private spawnTimer = FIRST_SPAWN_DELAY;
   private forcedDir: Dir | null = null;
   private chainLeft = 0;
-  private chainAlt = false;
-  private verticalSeen = false;
-  private diagonalSeen = false;
+  /** The flare fade is announced exactly once per run. */
+  private flareAnnounced = false;
 
   /** Consecutive clutches. One relaxed parry sets it back to zero. */
   private clutchStreak = 0;
@@ -275,6 +349,8 @@ export class DirectionGame extends BaseGame {
   private multPop = 0;
   private clutchFlash = 0;
   private breakFlash = 0;
+  /** Non-directional spawn cue, for once the flare no longer draws one. */
+  private spawnPulse = 0;
   /** Multiplier the broken streak was worth, so the loss has a number on it. */
   private lostMult = 1;
   private hint = 3.4;
@@ -339,8 +415,6 @@ export class DirectionGame extends BaseGame {
       e.active = false;
       e.phase = "telegraph";
       e.dir = "left";
-      e.flareDir = "left";
-      e.feint = false;
       e.t = 0;
       e.telegraph = 1;
       e.speed = 0;
@@ -372,9 +446,7 @@ export class DirectionGame extends BaseGame {
     // reaction window the game will ever offer.
     this.forcedDir = "left";
     this.chainLeft = 0;
-    this.chainAlt = false;
-    this.verticalSeen = false;
-    this.diagonalSeen = false;
+    this.flareAnnounced = false;
 
     this.clutchStreak = 0;
     this.multiplier = 1;
@@ -388,6 +460,7 @@ export class DirectionGame extends BaseGame {
     this.multPop = 0;
     this.clutchFlash = 0;
     this.breakFlash = 0;
+    this.spawnPulse = 0;
     this.lostMult = 1;
     this.hint = 3.4;
     this.hintStage = 0;
@@ -435,6 +508,22 @@ export class DirectionGame extends BaseGame {
       this.hint = 3.6;
       this.hintText = CLUTCH_HINT;
     }
+    // The flare fade is a real rule change, and the only one a run still has,
+    // so it is announced the moment it starts rather than left to be noticed
+    // by a player who is busy. The announcement also FIRES the replacement cue
+    // once: the player meets the centre pulse here, with a flare still on
+    // screen to compare it against, instead of meeting it for the first time
+    // on a spawn they have to answer.
+    if (!this.flareAnnounced && this.elapsed >= FLARE_FULL) {
+      this.flareAnnounced = true;
+      this.hintStage = 2;
+      this.hint = 4.2;
+      this.hintText = FLARE_GONE_HINT;
+      this.spawnPulse = 1;
+      this.audio.play("warn", 0.62, 0.9);
+      this.audio.play("hit", 0.7, 0.45);
+      this.shake.add(4, 0.28);
+    }
   }
 
   private decayFlashes(dt: number): void {
@@ -442,6 +531,7 @@ export class DirectionGame extends BaseGame {
     this.whiteFlash = Math.max(0, this.whiteFlash - dt);
     this.ringFlash = Math.max(0, this.ringFlash - dt * 2.6);
     this.multPop = Math.max(0, this.multPop - dt * 1.8);
+    this.spawnPulse = Math.max(0, this.spawnPulse - dt * 2.8);
     this.clutchFlash = Math.max(0, this.clutchFlash - dt * 1.5);
     this.breakFlash = Math.max(0, this.breakFlash - dt * 1.3);
   }
@@ -605,9 +695,7 @@ export class DirectionGame extends BaseGame {
       }
 
       if (e.phase === "telegraph") {
-        const before = e.t;
         e.t -= sim;
-        if (e.feint && before > FEINT_REVEAL && e.t <= FEINT_REVEAL) this.revealFeint(e);
         if (e.t <= 0) this.beginApproach(e);
         continue;
       }
@@ -649,27 +737,6 @@ export class DirectionGame extends BaseGame {
     e.y = PLAYER_Y + info.vy * e.d;
   }
 
-  private revealFeint(e: Enemy): void {
-    const info = DIR_INFO[e.dir];
-    this.audio.play("warn", info.detune, 1);
-    this.audio.play("spawn", 1, 0.5);
-    this.fanOpt.life = 0.34;
-    this.fanOpt.size = 4;
-    this.fanOpt.sizeEnd = 0.8;
-    this.fanOpt.color = AMBER;
-    this.fanOpt.shape = "circle";
-    this.fanOpt.drag = 0.2;
-    this.fanOpt.spin = 0;
-    this.fanOpt.additive = false;
-    this.fx.burst(
-      PLAYER_X + info.vx * SPAWN_DIST,
-      PLAYER_Y + info.vy * SPAWN_DIST,
-      10,
-      170,
-      this.fanOpt
-    );
-  }
-
   private beginApproach(e: Enemy): void {
     const info = DIR_INFO[e.dir];
     e.phase = "approach";
@@ -677,7 +744,11 @@ export class DirectionGame extends BaseGame {
     // strike time the scheduler guaranteed stays exact.
     e.d = SPAWN_DIST + e.speed * e.t;
     this.place(e);
-    this.audio.play("spawn", info.detune, 0.55);
+    // Flat on purpose, and flat whatever is passed: "spawn" is a noise burst
+    // and AudioManager only detunes oscillators, so this could never have named
+    // the side. Written as 1 so nobody reads an inert argument as a live cue and
+    // tunes it — the arrival is answered by the enemy that just appeared.
+    this.audio.play("spawn", 1, 0.55);
 
     this.fanOpt.life = 0.3;
     this.fanOpt.size = 4.2;
@@ -903,7 +974,7 @@ export class DirectionGame extends BaseGame {
 
     // Linear, not ease-in: the quadratic version sat within 3% of its start
     // speed for the whole first 15 seconds, so the opening never escalated.
-    const speed = rampLinear(this.elapsed, 300, 580, 65);
+    const speed = rampLinear(this.elapsed, SPEED_START, SPEED_TOP, SPEED_RAMP);
     const approach = TRAVEL / speed;
     const turnGap = rampAsymptotic(
       this.elapsed,
@@ -912,19 +983,13 @@ export class DirectionGame extends BaseGame {
       TURN_GAP_HALFLIFE
     );
 
-    const vert = verticalWeight(this.elapsed);
-    const diag = diagonalWeight(this.elapsed);
-    let dir = this.forcedDir ?? pickSpawnDir(vert, diag);
-    // Halves toward a 0.40s floor. Eight answers is a slower decision than
-    // four, so the floor went UP with the diagonals rather than the approach
-    // to it getting gentler — a tight window is fine, a coin flip is not.
-    let tele = rampAsymptotic(this.elapsed, 0.85, -0.45, 13);
-    const wantFeint =
-      this.forcedDir === null &&
-      this.chainLeft === 0 &&
-      this.elapsed >= FEINT_START &&
-      Math.random() < rampAsymptotic(this.elapsed - FEINT_START, 0, 0.3, 40);
-    if (wantFeint) tele = Math.max(tele, FEINT_TELEGRAPH_MIN);
+    // Every one of the eight sides is spawnable from the first wave; there is
+    // no tier ladder left to consult.
+    let dir = this.forcedDir ?? pickSpawnDir();
+    // Halves toward a 0.5s floor. This is the flare's entire life while the
+    // flare still exists, and pure scheduling slack afterwards — past the fade
+    // the warning is `approach` above, which never drops under 0.90s.
+    const tele = rampAsymptotic(this.elapsed, 0.9, -0.4, 13);
 
     const base = Math.max(this.simTime + tele + approach, OPENING_GRACE + GRACE_MARGIN);
     let strikeAt = this.deconflict(base, dir, turnGap);
@@ -932,7 +997,7 @@ export class DirectionGame extends BaseGame {
 
     if (stretch > MAX_TELEGRAPH_STRETCH && this.forcedDir === null) {
       // This side is congested; another one may have a clean slot.
-      const alt = pickSpawnDirExcept(dir, vert, diag);
+      const alt = pickSpawnDirExcept(dir);
       if (alt !== dir) {
         const altAt = this.deconflict(base, alt, turnGap);
         if (altAt - base < stretch) {
@@ -943,20 +1008,11 @@ export class DirectionGame extends BaseGame {
       }
     }
     if (stretch > MAX_TELEGRAPH_STRETCH) {
-      // Refuse rather than crowd. Density is capped by the guard, not by luck.
+      // Refuse rather than crowd. Density is capped by the guard, not by luck —
+      // and now that the spawner asks for waves faster than the guard will pass
+      // them, this branch is what the late-game density actually is.
       this.spawnTimer = RETRY_DELAY;
       return;
-    }
-
-    // A one-time stretch past the usual cap for the run's first strike from a
-    // newly opened tier. Re-run the guard afterwards: pushing later can clear
-    // one neighbour and land inside another one's window.
-    const firstVertical = !this.verticalSeen && isVertical(dir);
-    const firstDiagonal = !this.diagonalSeen && isDiagonal(dir);
-    if (firstVertical || firstDiagonal) {
-      const lead = firstDiagonal ? FIRST_DIAGONAL_TELEGRAPH : FIRST_VERTICAL_TELEGRAPH;
-      const want = this.simTime + lead + approach;
-      if (strikeAt < want) strikeAt = this.deconflict(want, dir, turnGap);
     }
 
     const finalTele = strikeAt - this.simTime - approach;
@@ -964,58 +1020,67 @@ export class DirectionGame extends BaseGame {
     e.active = true;
     e.phase = "telegraph";
     e.dir = dir;
-    // A spawn that announces a rule change is never also a lie.
-    e.feint = wantFeint && !firstVertical && !firstDiagonal && finalTele >= FEINT_REVEAL + 0.3;
-    // An uncommitted flare picks any live side — including the true one — so
-    // "amber means somewhere else" is never a shortcut around reading it.
-    e.flareDir = e.feint ? pickSpawnDir(vert, diag) : dir;
     e.t = finalTele;
     e.telegraph = finalTele;
     e.speed = speed;
     e.d = SPAWN_DIST;
     e.strikeAt = strikeAt;
     // Stamped now rather than next frame: standing on the answer before the
-    // flare even appears is the largest possible lead, and so the least clutch.
+    // enemy even exists is the largest possible lead, and so the least clutch.
     e.correctSince = this.facing === dir ? this.simTime : -1;
     e.composeUsed = false;
     this.place(e);
-    this.audio.play("warn", DIR_INFO[e.flareDir].detune, e.feint ? 0.5 : 0.9);
-    if (firstVertical || firstDiagonal) {
-      // Double-struck warn: the tier itself is the news, not just this enemy.
-      this.audio.play("spawn", DIR_INFO[dir].detune, 0.6);
-      this.hintStage = 1;
-      this.hint = 3;
-      if (firstDiagonal) {
-        this.diagonalSeen = true;
-        this.hintText = this.isTouch ? DIAGONAL_HINT_TOUCH : DIAGONAL_HINT;
-      } else {
-        this.verticalSeen = true;
-        this.hintText = VERTICAL_HINT;
-      }
-    }
+    this.announceSpawn(dir);
 
     this.scheduleNext(dir);
   }
 
+  /**
+   * The spawn cue. It is allowed to say WHEN, and only conditionally WHERE.
+   *
+   * While the flare is up the pitch names the height of the side — one more
+   * copy of an answer that is already drawn on the board. The pitch slides to
+   * neutral as the flare fades, because a sound that names the side would just
+   * be the flare with the picture switched off. What survives the fade is a
+   * ring closing on the player: a spawn is never silent, it simply stops
+   * answering the question for you.
+   */
+  private announceSpawn(dir: Dir): void {
+    const flare = flareAlpha(this.elapsed);
+    this.audio.play("warn", 1 + (DIR_INFO[dir].detune - 1) * flare, 0.9);
+    if (flare < 1) this.spawnPulse = 1;
+  }
+
   private scheduleNext(dir: Dir): void {
     if (this.chainLeft <= 0 && this.elapsed >= CHAIN_START) {
-      const chance = rampAsymptotic(this.elapsed - CHAIN_START, 0, 0.5, 30);
-      if (Math.random() < chance) {
-        this.chainLeft = randInt(1, 2); // 2-3 enemies in the burst
-        this.chainAlt = Math.random() < 0.4;
-      }
+      const chance = rampAsymptotic(
+        this.elapsed - CHAIN_START,
+        CHAIN_CHANCE_START,
+        CHAIN_CHANCE_RANGE,
+        CHAIN_CHANCE_HALFLIFE
+      );
+      if (Math.random() < chance) this.chainLeft = randInt(1, 3); // 2-4 in the burst
     }
 
     if (this.chainLeft > 0) {
       this.chainLeft--;
-      this.forcedDir = this.chainAlt ? DIR_INFO[dir].opposite : dir;
-      this.spawnTimer = this.chainAlt ? CHAIN_ALT_GAP : CHAIN_SAME_GAP;
+      // Every link is at least two octants from the one before it. A burst that
+      // repeats a side is one answer HELD through two arrivals; the fun is in
+      // several directions in quick succession, so the mix is deliberate rather
+      // than a coin flip between "same side" and "opposite side".
+      //
+      // Nothing here promises the burst will fit. This only asks: the guard
+      // still spaces the strikes by how far apart the facings they demand sit,
+      // and a link that cannot be answered in time is pushed later or dropped.
+      this.forcedDir = pickChainDir(dir, CHAIN_MIN_STEPS);
+      this.spawnTimer = CHAIN_GAP;
       return;
     }
 
     this.forcedDir = null;
     const interval =
-      rampEaseOut(this.elapsed, 1.2, 0.6, 28) * rampAsymptotic(this.elapsed, 1, -0.28, 140);
+      rampEaseOut(this.elapsed, SPAWN_SLOW, SPAWN_FAST, SPAWN_RAMP) *
+      rampAsymptotic(this.elapsed, 1, -0.25, 120);
     this.spawnTimer = interval * randRange(0.86, 1.14);
   }
 
@@ -1052,16 +1117,23 @@ export class DirectionGame extends BaseGame {
     this.drawStage(g);
     this.drawMultiplierGhost(g);
     this.drawLanes(g, dead);
+    this.drawSpawnPulse(g, dead);
 
-    for (let i = 0; i < this.enemies.length; i++) {
-      const e = this.enemies[i];
-      if (!e.active || e.phase !== "telegraph") continue;
-      // Warnings recede with the enemies once the run is over. A flare left at
-      // full strength is a side still shouting "here" over the readout that
-      // names the side which actually landed.
-      if (dead) g.globalAlpha = 0.22;
-      drawTelegraph(g, e, PLAYER_X, PLAYER_Y);
-      g.globalAlpha = 1;
+    // The directional flare is a tutorial with an expiry date: full strength
+    // through the opening, two seconds of visible fade, then nothing at all.
+    // Past that the loop is skipped outright rather than drawing at zero.
+    const flare = flareAlpha(this.elapsed);
+    if (flare > 0) {
+      for (let i = 0; i < this.enemies.length; i++) {
+        const e = this.enemies[i];
+        if (!e.active || e.phase !== "telegraph") continue;
+        // Warnings recede with the enemies once the run is over. A flare left
+        // at full strength is a side still shouting "here" over the readout
+        // that names the side which actually landed.
+        g.globalAlpha = dead ? flare * 0.22 : flare;
+        drawTelegraph(g, e, PLAYER_X, PLAYER_Y);
+        g.globalAlpha = 1;
+      }
     }
 
     for (let i = 0; i < this.enemies.length; i++) {
@@ -1126,9 +1198,9 @@ export class DirectionGame extends BaseGame {
   private drawFloor(g: CanvasRenderingContext2D): void {
     g.fillStyle = FLOOR;
     g.fillRect(CARD_X, FLOOR_Y, CARD_W, CARD_Y + CARD_H - FLOOR_Y);
-    g.fillStyle = withAlpha(ROSE, 0.18);
+    g.fillStyle = FLOOR_EDGE;
     g.fillRect(CARD_X, FLOOR_Y, CARD_W, 3);
-    g.fillStyle = withAlpha(ROSE, 0.07);
+    g.fillStyle = FLOOR_GLOW;
     g.fillRect(CARD_X, FLOOR_Y + 3, CARD_W, 12);
     // The player's contact shadow. Everything else floats above it.
     dropShadow(g, PLAYER_X, FLOOR_Y - 7, 44, 11, 0.13);
@@ -1164,18 +1236,20 @@ export class DirectionGame extends BaseGame {
       if (!e.active || e.phase !== "approach") continue;
       const info = DIR_INFO[e.dir];
       g.lineWidth = 3;
-      g.strokeStyle = withAlpha(ROSE, 0.13);
+      g.strokeStyle = LANE_LINE;
       g.beginPath();
       g.moveTo(PLAYER_X + info.vx * SPAWN_DIST, PLAYER_Y + info.vy * SPAWN_DIST);
       g.lineTo(PLAYER_X + info.vx * STRIKE_DIST, PLAYER_Y + info.vy * STRIKE_DIST);
       g.stroke();
 
-      // Arrival marker, just outside the strike ring. The edge flare dies the
-      // instant the enemy appears, so from then on this is the only cue sitting
-      // where the player's eyes already are — which is what makes an eight-way
-      // read possible at all once the spawn interval drops under a second. It
-      // is narrower than the 45 degrees between facings, so two neighbouring
-      // lanes never merge into one blur.
+      // Arrival marker, just outside the strike ring. Past the flare fade this
+      // and the enemy itself are the ONLY things that say where a hit is coming
+      // from, and this is the one sitting where the player's eyes already are —
+      // which is what makes an eight-way read possible at all with three
+      // enemies closing at once. It is narrower than the 45 degrees between
+      // facings, so two neighbouring lanes never merge into one blur, and it is
+      // driven by the enemy's live position: it tracks a threat already on the
+      // board rather than announcing one that is not.
       const near = 1 - Math.min(1, Math.max(0, (e.d - STRIKE_DIST) / TRAVEL));
       // Darkest ink on the stage, so the "it lands HERE" cue outranks the
       // player's own guard arc rather than competing with it.
@@ -1185,6 +1259,29 @@ export class DirectionGame extends BaseGame {
       g.arc(PLAYER_X, PLAYER_Y, STRIKE_DIST + 18, info.angle - 0.3, info.angle + 0.3);
       g.stroke();
     }
+    g.restore();
+  }
+
+  /**
+   * The cue that replaces the flare: a ring closing on the player.
+   *
+   * It says WHEN and refuses to say WHERE — concentric, so it carries no
+   * direction at all. Low-alpha friendly rose, well under the enemies, which
+   * matters more now than it did: the thing that ends the run has to stay the
+   * highest-contrast element on the board when it is also the only thing that
+   * answers the question. It contracts inward, where the parry ring expands
+   * outward, so the two are never each other.
+   */
+  private drawSpawnPulse(g: CanvasRenderingContext2D, dead: boolean): void {
+    if (this.spawnPulse <= 0) return;
+    const k = this.spawnPulse;
+    g.save();
+    g.globalAlpha = dead ? 0.22 : 1;
+    g.lineWidth = 2 + 3 * (1 - k);
+    g.strokeStyle = withAlpha(ROSE, 0.1 + 0.16 * (1 - k));
+    g.beginPath();
+    g.arc(PLAYER_X, PLAYER_Y, STRIKE_DIST + 168 * k, 0, TAU);
+    g.stroke();
     g.restore();
   }
 
@@ -1203,7 +1300,7 @@ export class DirectionGame extends BaseGame {
     g.stroke();
     g.setLineDash(RING_DASH);
     g.lineWidth = 3;
-    g.strokeStyle = withAlpha(ROSE, 0.45);
+    g.strokeStyle = RING_DASH_INK;
     g.beginPath();
     g.arc(PLAYER_X, PLAYER_Y, STRIKE_DIST, 0, TAU);
     g.stroke();
@@ -1213,7 +1310,7 @@ export class DirectionGame extends BaseGame {
     // guard needs a fixed scale to be read against, or "up" and "up-left" are
     // the same picture until the strike lands.
     g.lineWidth = 3;
-    g.strokeStyle = withAlpha(INK_FAINT, 0.45);
+    g.strokeStyle = NOTCH_INK;
     for (let i = 0; i < 8; i++) {
       const na = i * OCTANT_ANGLE;
       const c = Math.cos(na);

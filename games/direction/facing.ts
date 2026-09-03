@@ -1,9 +1,9 @@
-import { rampAsymptotic } from "@/games/core/curve";
-
 /**
- * The facing model: eight compass points, complete from day one even though a
- * run only opens them a tier at a time. Opening a tier is a weight change, not
- * a refactor, and nothing downstream ever special-cases a named pair.
+ * The facing model: eight compass points, all of them live from the first
+ * spawn. There is no tier ladder any more — the opening teaches eight answers
+ * at once, with the warning flare (see enemies.ts) carrying that load for the
+ * first twelve seconds instead of a slow unlock doing it over half a minute.
+ * Nothing downstream ever special-cases a named pair.
  */
 export type Dir =
   | "up"
@@ -28,15 +28,23 @@ export interface DirInfo {
   angle: number;
   /**
    * Compass index: 0 = right, one step per 45 degrees clockwise. The scheduling
-   * guard and the diagonal-compose grace both reason in these steps, which is
-   * what keeps them from degenerating into a list of hand-written pairs.
+   * guard, the chain mixer and the diagonal-compose grace all reason in these
+   * steps, which is what keeps them from degenerating into a list of
+   * hand-written pairs.
    */
   octant: number;
   diagonal: boolean;
   opposite: Dir;
   /**
    * Pitch multiplier for this side's warning sound. Pitch tracks height on
-   * screen, so the ear places the threat vertically before the eye finds it.
+   * screen, so the ear places the threat vertically before the eye finds it —
+   * which is why the caller slides it back to 1 once the flare is gone. A sound
+   * that names the side would be the flare with the picture turned off.
+   *
+   * The pre-arrival `warn` tick is the ONLY cue this reaches: the arrival sound
+   * is a noise burst, and AudioManager applies detune to oscillators only, so
+   * noise cannot carry a pitch however it is called. Neutralizing `warn` really
+   * does close the last channel that answers the question early.
    */
   detune: number;
   label: string;
@@ -174,101 +182,59 @@ export function octantDist(a: Dir, b: Dir): number {
   return d > 4 ? 8 - d : d;
 }
 
-export function isVertical(dir: Dir): boolean {
-  return dir === "up" || dir === "down";
-}
-
-export function isDiagonal(dir: Dir): boolean {
-  return DIR_INFO[dir].diagonal;
-}
-
 /**
- * Seconds before the vertical sides open.
+ * The compass in order, indexed by octant.
  *
- * Until then the duel is a binary read — the answer is always "the other one" —
- * and every difficulty knob before this point only makes that same read faster.
- * Opening up/down changes the question itself from one bit to two, which is the
- * one escalation in this game that alters what the player is actually doing.
+ * Every pick below is octant arithmetic on this table rather than a filtered
+ * list plus a retry loop: "at least two steps from the last one" is one modulo
+ * and no allocation, and it can never fail to find a side.
  */
-export const VERTICAL_START = 16;
-
-/**
- * Seconds before the diagonals open, the second and last rule change.
- *
- * Deliberately far behind the verticals: a diagonal is not just a fifth answer,
- * it is the first one that costs two keys instead of one, so the player needs
- * the four-way read to be automatic before the input itself gets harder.
- */
-export const DIAGONAL_START = 34;
-
-/**
- * Weight of a single vertical side against a horizontal side's 1. Asymptotic to
- * 0.9, so vertical strikes top out near 47% of spawns: enough that the player
- * can never stop checking, not so much that the horizontal duel stops being the
- * spine of the game.
- */
-export function verticalWeight(elapsed: number): number {
-  if (elapsed < VERTICAL_START) return 0;
-  return rampAsymptotic(elapsed - VERTICAL_START, 0, 0.9, 15);
-}
-
-/**
- * Weight of a single diagonal. Lower per side than a cardinal, but there are
- * four of them, so they settle near 44% of spawns collectively — the hardest
- * read is common enough to matter and still never the majority of the run.
- */
-export function diagonalWeight(elapsed: number): number {
-  if (elapsed < DIAGONAL_START) return 0;
-  return rampAsymptotic(elapsed - DIAGONAL_START, 0, 0.75, 18);
-}
-
-/** 0 = always live, 1 = gated on the vertical weight, 2 = on the diagonal one. */
-const TIER_ALWAYS = 0;
-const TIER_VERTICAL = 1;
-const TIER_DIAGONAL = 2;
-
-export interface SpawnRow {
-  dir: Dir;
-  weight: number;
-  tier: number;
-}
-
-export const SPAWN_TABLE: readonly SpawnRow[] = [
-  { dir: "left", weight: 1, tier: TIER_ALWAYS },
-  { dir: "right", weight: 1, tier: TIER_ALWAYS },
-  { dir: "up", weight: 1, tier: TIER_VERTICAL },
-  { dir: "down", weight: 1, tier: TIER_VERTICAL },
-  { dir: "upLeft", weight: 1, tier: TIER_DIAGONAL },
-  { dir: "upRight", weight: 1, tier: TIER_DIAGONAL },
-  { dir: "downLeft", weight: 1, tier: TIER_DIAGONAL },
-  { dir: "downRight", weight: 1, tier: TIER_DIAGONAL },
+const OCTANT_DIRS: readonly Dir[] = [
+  "right",
+  "downRight",
+  "down",
+  "downLeft",
+  "left",
+  "upLeft",
+  "up",
+  "upRight",
 ];
 
-function rowWeight(row: SpawnRow, vert: number, diag: number): number {
-  if (row.tier === TIER_VERTICAL) return row.weight * vert;
-  if (row.tier === TIER_DIAGONAL) return row.weight * diag;
-  return row.weight;
+/**
+ * Uniform over all eight sides, from the very first spawn.
+ *
+ * Uniform rather than weighted on purpose: the diagonals used to be a late
+ * unlock earned by surviving, and a player who only ever sees them at 34s has
+ * spent half a minute learning that "the answer is one of four". Opening flat
+ * means the read the player builds in the first ten seconds is the read the
+ * whole run uses. It also puts a diagonal on half of all spawns, which is what
+ * makes the flare worth paying attention to while it is still there.
+ */
+export function pickSpawnDir(): Dir {
+  return OCTANT_DIRS[(Math.random() * 8) | 0];
 }
 
-/** Weighted pick. A tier weight of 0 makes that tier unreachable. */
-export function pickSpawnDir(vert: number, diag: number): Dir {
-  let total = 0;
-  for (let i = 0; i < SPAWN_TABLE.length; i++) total += rowWeight(SPAWN_TABLE[i], vert, diag);
-  const r = Math.random() * total;
-  let acc = 0;
-  for (let i = 0; i < SPAWN_TABLE.length; i++) {
-    acc += rowWeight(SPAWN_TABLE[i], vert, diag);
-    if (r < acc) return SPAWN_TABLE[i].dir;
-  }
-  return SPAWN_TABLE[0].dir;
+/** A side other than `dir`, used when the scheduler retries a congested one. */
+export function pickSpawnDirExcept(dir: Dir): Dir {
+  const step = 1 + ((Math.random() * 7) | 0);
+  return OCTANT_DIRS[(DIR_INFO[dir].octant + step) & 7];
 }
 
-/** A spawnable side other than `dir`, used when the scheduler retries. */
-export function pickSpawnDirExcept(dir: Dir, vert: number, diag: number): Dir {
-  for (let attempt = 0; attempt < 8; attempt++) {
-    const d = pickSpawnDir(vert, diag);
-    if (d !== dir) return d;
-  }
-  // Opposites always share a tier, so this is spawnable whenever `dir` was.
-  return DIR_INFO[dir].opposite;
+/**
+ * The next side of a chain: at least `minSteps` around the compass from the one
+ * before it.
+ *
+ * A burst that repeats a side is one answer held, not several read — the player
+ * turns once and waits. Forcing a real gap between links is what makes a chain
+ * the thing it is fun for: several directions in quick succession. The offset
+ * is drawn from the legal range directly, so no draw is ever rejected and the
+ * cost is one modulo.
+ *
+ * `minSteps` is 1..4; two steps is the useful floor, since one step is the pose
+ * the compose ambiguity already lives in.
+ */
+export function pickChainDir(prev: Dir, minSteps: number): Dir {
+  const span = 9 - 2 * minSteps;
+  const off = minSteps + ((Math.random() * span) | 0);
+  return OCTANT_DIRS[(DIR_INFO[prev].octant + off) & 7];
 }
