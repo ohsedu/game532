@@ -96,20 +96,20 @@ SUPABASE_SERVICE_ROLE_KEY=...                        # 그 프로젝트의 servi
 `NEXT_PUBLIC_` 접두사를 붙이거나 클라이언트 컴포넌트에서 import하지 마세요.
 비어 있으면 랭킹은 보이지만 점수 등록만 503으로 막힙니다.
 
-### 옛 점수 옮기기
+### 랭킹에 같은 이름이 여러 줄 보이는 이유
 
-game532는 예전에 자기 Supabase 프로젝트를 따로 썼습니다. 거기 쌓인 `scores`를
-옮기는 것은 [`scripts/migrate-scores.mjs`](scripts/migrate-scores.mjs)가 합니다.
+이 앱은 한때 자기 Supabase 프로젝트를 따로 썼습니다. 거기 쌓인 스무 줄은 통합
+프로젝트로 옮긴 뒤 옛 프로젝트를 지웠고, 이관 스크립트도 함께 걷었습니다
+(쓸 곳이 없어진 스크립트를 남겨 두면 README가 돌아가지 않는 명령을 안내하게
+됩니다. 필요하면 `git log -- scripts/migrate-scores.mjs` 에 있습니다).
 
-```bash
-node scripts/migrate-scores.mjs --dry     # 무엇이 옮겨지는지만 본다
-npm run migrate-scores                    # 실제로 넣는다
-```
-
-옮겨진 점수는 전부 **비회원 줄**(`user_id = null`)이 됩니다. 옛 테이블에는 로그인이
-없었으니 남은 것은 사람이 적어 넣은 닉네임뿐이고, 그것으로 계정을 짚으면 남의 이름을
+옮겨온 줄은 전부 **비회원 줄**(`user_id = null`)입니다. 그 시절에는 로그인이 없어서
+남은 것이 사람이 적어 넣은 닉네임뿐이었고, 그것으로 계정을 짚으면 남의 이름을
 적었던 사람의 점수가 그 사람 계정에 붙습니다 — 그러면 그 줄의 '대화하기' 버튼이
 엉뚱한 사람에게 말을 걸게 됩니다.
+
+그래서 **비회원 줄은 접지 않습니다.** 옛 기록이 한 이름으로 여러 줄 서 있는 것은
+정상이고, 로그인해서 한 판 하면 그때부터 쌓이는 회원 줄은 사람당 하나로 접힙니다.
 
 ## 점수 보안
 
@@ -173,7 +173,6 @@ lib/        format · localBest · rateLimit · supabase/{server,client}
             usePlayer   세션 쿠키에서 읽는 "지금 누가 하고 있나"
 types/      game · score
 supabase/   schema.sql  ← 껍데기. 정본은 talk532/supabase/game-scores.sql
-scripts/    migrate-scores.mjs  옛 프로젝트의 점수 이관
 docs/       ENGINE_CONTRACT.md
 ```
 
