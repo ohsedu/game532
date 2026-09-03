@@ -183,8 +183,19 @@ const GRACE_MARGIN = 0.45;
  * The distance half of that trade is capped by the board (see SPAWN_DIST), so
  * speed is the knob the reading window is actually bought with.
  */
-const SPEED_START = 170;
-const SPEED_TOP = 255;
+/**
+ * Approach TIME, not speed.
+ *
+ * Each side now starts at its own wall, so their distances differ (410px across
+ * against 250px vertically). Fixing the time and deriving each enemy speed from
+ * its own travel keeps the reaction window identical on every side — which is
+ * what the old uniform ring was for — while letting the long sides cross their
+ * distance fast enough to feel like a threat again. Holding SPEED constant
+ * instead would have made "up" arrive in 0.43s at the top of the ramp, which is
+ * under human reaction and simply unfair.
+ */
+const APPROACH_FROM = 1.36;
+const APPROACH_TO = 0.79;
 const SPEED_RAMP = 65;
 
 /**
@@ -742,7 +753,7 @@ export class DirectionGame extends BaseGame {
     e.phase = "approach";
     // Carry the frame's telegraph overshoot into the travel so the predicted
     // strike time the scheduler guaranteed stays exact.
-    e.d = SPAWN_DIST + e.speed * e.t;
+    e.d = DIR_INFO[e.dir].spawn + e.speed * e.t;
     this.place(e);
     // Flat on purpose, and flat whatever is passed: "spawn" is a noise burst
     // and AudioManager only detunes oscillators, so this could never have named
@@ -973,9 +984,8 @@ export class DirectionGame extends BaseGame {
     }
 
     // Linear, not ease-in: the quadratic version sat within 3% of its start
-    // speed for the whole first 15 seconds, so the opening never escalated.
-    const speed = rampLinear(this.elapsed, SPEED_START, SPEED_TOP, SPEED_RAMP);
-    const approach = TRAVEL / speed;
+    // value for the whole first 15 seconds, so the opening never escalated.
+    const approach = rampLinear(this.elapsed, APPROACH_FROM, APPROACH_TO, SPEED_RAMP);
     const turnGap = rampAsymptotic(
       this.elapsed,
       TURN_GAP_START,
@@ -1022,8 +1032,8 @@ export class DirectionGame extends BaseGame {
     e.dir = dir;
     e.t = finalTele;
     e.telegraph = finalTele;
-    e.speed = speed;
-    e.d = SPAWN_DIST;
+    e.speed = DIR_INFO[dir].travel / approach;
+    e.d = DIR_INFO[dir].spawn;
     e.strikeAt = strikeAt;
     // Stamped now rather than next frame: standing on the answer before the
     // enemy even exists is the largest possible lead, and so the least clutch.

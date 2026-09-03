@@ -1,24 +1,43 @@
 /** Stage geometry and palette. The player never moves, so these are constants. */
 
+/** The logical stage the game draws into. */
+export const STAGE_W = 1000;
+export const STAGE_H = 700;
+
 export const PLAYER_X = 500;
 /** Above the vertical centre so the floor line and its shadow have room. */
 export const PLAYER_Y = 340;
 export const FLOOR_Y = PLAYER_Y + 88;
 
 /**
- * Distance from the player at which an enemy materializes. Identical for every
- * side so approach time — and therefore the reaction window — never depends on
- * which direction the strike comes from.
- *
- * This is the board's ceiling rather than a preference. The player stands 322px
- * below the top of the stage card, so a spawn ring any wider than this puts the
- * "up" enemy off the board, and an enemy that is invisible for the first slice
- * of its approach is worse than no warning at all — which is exactly what the
- * flare fade cannot afford. The rest of the reading window is therefore bought
- * with approach SPEED (see SPEED_START / SPEED_TOP in DirectionGame), not with
- * more distance.
+ * Radius the idle art and the preview ring draw against. Enemies no longer
+ * spawn on it — see spawnDistFor.
  */
 export const SPAWN_DIST = 306;
+/** Keeps a spawning enemy fully on the card instead of clipped by its edge. */
+const WALL_MARGIN = 16;
+
+/**
+ * How far out an enemy starts, measured along its own direction to the wall.
+ *
+ * A uniform ring was capped by the SHORTEST direction: the player sits 340px
+ * below the top, so every side was held to what "up" could manage, and the
+ * reading window had to be bought by slowing everything down. That is what
+ * killed the sense of speed on the six directions with room to spare.
+ *
+ * Each side now starts at its own wall — 410px of travel horizontally against
+ * 250px vertically. Approach TIME is held equal instead (APPROACH_FROM /
+ * APPROACH_TO in DirectionGame), so the reaction window still never depends on
+ * the direction, while the long sides get to cross their distance fast.
+ */
+export function spawnDistFor(vx: number, vy: number): number {
+  let t = Infinity;
+  if (vx > 0) t = Math.min(t, (STAGE_W - WALL_MARGIN - PLAYER_X) / vx);
+  if (vx < 0) t = Math.min(t, (WALL_MARGIN - PLAYER_X) / vx);
+  if (vy > 0) t = Math.min(t, (STAGE_H - WALL_MARGIN - PLAYER_Y) / vy);
+  if (vy < 0) t = Math.min(t, (WALL_MARGIN - PLAYER_Y) / vy);
+  return t;
+}
 /**
  * Enemies resolve the instant they cross this radius. It is drawn as a ring so
  * the timing is something the player learns rather than guesses. It cannot

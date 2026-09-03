@@ -17,6 +17,8 @@ export type Dir =
 
 /** Diagonal unit component. Every side sits the same distance out, so approach
  *  time — and therefore the reaction window — never depends on the side. */
+import { STRIKE_DIST, spawnDistFor } from "./arena";
+
 const Q = Math.SQRT1_2;
 const P4 = Math.PI / 4;
 
@@ -24,6 +26,10 @@ export interface DirInfo {
   /** Unit vector pointing from the player toward that side. */
   vx: number;
   vy: number;
+  /** Distance to this direction's own wall; where its enemies start. */
+  spawn: number;
+  /** spawn - STRIKE_DIST, the distance an enemy of this side actually covers. */
+  travel: number;
   /** Canvas-space angle of that unit vector, radians. */
   angle: number;
   /**
@@ -57,6 +63,8 @@ export const DIR_INFO: Record<Dir, DirInfo> = {
   right: {
     vx: 1,
     vy: 0,
+    spawn: 0,
+    travel: 0,
     angle: 0,
     octant: 0,
     diagonal: false,
@@ -69,6 +77,8 @@ export const DIR_INFO: Record<Dir, DirInfo> = {
   downRight: {
     vx: Q,
     vy: Q,
+    spawn: 0,
+    travel: 0,
     angle: P4,
     octant: 1,
     diagonal: true,
@@ -81,6 +91,8 @@ export const DIR_INFO: Record<Dir, DirInfo> = {
   down: {
     vx: 0,
     vy: 1,
+    spawn: 0,
+    travel: 0,
     angle: P4 * 2,
     octant: 2,
     diagonal: false,
@@ -93,6 +105,8 @@ export const DIR_INFO: Record<Dir, DirInfo> = {
   downLeft: {
     vx: -Q,
     vy: Q,
+    spawn: 0,
+    travel: 0,
     angle: P4 * 3,
     octant: 3,
     diagonal: true,
@@ -105,6 +119,8 @@ export const DIR_INFO: Record<Dir, DirInfo> = {
   left: {
     vx: -1,
     vy: 0,
+    spawn: 0,
+    travel: 0,
     angle: Math.PI,
     octant: 4,
     diagonal: false,
@@ -117,6 +133,8 @@ export const DIR_INFO: Record<Dir, DirInfo> = {
   upLeft: {
     vx: -Q,
     vy: -Q,
+    spawn: 0,
+    travel: 0,
     angle: -P4 * 3,
     octant: 5,
     diagonal: true,
@@ -129,6 +147,8 @@ export const DIR_INFO: Record<Dir, DirInfo> = {
   up: {
     vx: 0,
     vy: -1,
+    spawn: 0,
+    travel: 0,
     angle: -P4 * 2,
     octant: 6,
     diagonal: false,
@@ -141,6 +161,8 @@ export const DIR_INFO: Record<Dir, DirInfo> = {
   upRight: {
     vx: Q,
     vy: -Q,
+    spawn: 0,
+    travel: 0,
     angle: -P4,
     octant: 7,
     diagonal: true,
@@ -237,4 +259,12 @@ export function pickChainDir(prev: Dir, minSteps: number): Dir {
   const span = 9 - 2 * minSteps;
   const off = minSteps + ((Math.random() * span) | 0);
   return OCTANT_DIRS[(DIR_INFO[prev].octant + off) & 7];
+}
+
+
+// Derived rather than typed out: the wall distance is pure geometry, and a
+// hand-written copy would drift the moment the stage or the player moved.
+for (const info of Object.values(DIR_INFO)) {
+  info.spawn = spawnDistFor(info.vx, info.vy);
+  info.travel = info.spawn - STRIKE_DIST;
 }
