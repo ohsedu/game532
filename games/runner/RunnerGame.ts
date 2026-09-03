@@ -326,9 +326,34 @@ const GAP_TIME_TO = 0.8;
  * because the whole wave is telegraphed at once.
  */
 const GAP_TIME_SECONDS = 32;
-/** Jitter shrinks with the ramp: a late run is relentless, not random. */
-const JITTER_FROM = 0.42;
-const JITTER_TO = 0.05;
+/**
+ * Jitter narrows with the ramp but never anneals away.
+ *
+ * It used to close to 0.05s, which made a late run a metronome — once the beat
+ * is learned the obstacles stop being read at all and the game plays itself.
+ * Keeping real spread is what forces every gap to be judged on its own.
+ */
+const JITTER_FROM = 0.58;
+const JITTER_TO = 0.46;
+/**
+ * The jitter is two-sided, biased SHORT.
+ *
+ * Measured spacing sat well above MIN_GAP_TIME even late, because each obstacle
+ * kind carries its own floor on top of it — so leaning short costs nothing in
+ * fairness (the clamp still has the last word) and pulls the median down, which
+ * is the half of "make it harder" that widening alone does not deliver.
+ */
+const JITTER_SHORT = 0.55;
+const JITTER_LONG = 0.45;
+/**
+ * How often a gap is replaced by a breather, and how much longer it runs.
+ *
+ * A pause is not a gift: the cluster after it reads as sudden precisely because
+ * the cadence just stopped, and a rhythm with holes in it cannot be memorised.
+ */
+const BREATHER_CHANCE = 0.17;
+const BREATHER_MIN = 0.4;
+const BREATHER_MAX = 0.95;
 
 // --- Bursts -----------------------------------------------------------------
 /**
@@ -1303,7 +1328,14 @@ export class RunnerGame extends BaseGame {
       after <= 0
         ? JITTER_FROM
         : rampLinear(after, JITTER_FROM, JITTER_TO, GAP_TIME_SECONDS);
-    return Math.max(floor, base + randRange(0, jitterSpan));
+    let gap =
+      base + randRange(-jitterSpan * JITTER_SHORT, jitterSpan * JITTER_LONG);
+    if (Math.random() < BREATHER_CHANCE) {
+      gap += randRange(BREATHER_MIN, BREATHER_MAX);
+    }
+    // The floor is the only thing between the short tail and an unanswerable
+    // spawn, so it clamps last and unconditionally.
+    return Math.max(floor, gap);
   }
 
   /**
