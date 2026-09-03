@@ -28,7 +28,7 @@ const TOUCH_HINT: Record<TouchMode, string> = {
   action: "TAP 버튼으로 조작",
   tap: "화면을 탭",
   "jump-slide": "JUMP 로 뛰고 SLIDE 로 미끄러지기",
-  "jump-slide-dash": "JUMP · SLIDE · DASH 로 돌파",
+  "jump-slide-dash": "JUMP · SLIDE · DASH 버튼으로 돌파",
   pointer: "타겟을 탭",
 };
 

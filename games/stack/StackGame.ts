@@ -138,14 +138,16 @@ const RECOVER_BIG_AT = 6;
 const RECOVER_PX_BIG = 18;
 
 // --- Scoring ---------------------------------------------------------------
-const SCORE_BASE = 12;
+/** All stack scores share this scale, so their ratios to each other hold. */
+const SCORE_SCALE = 0.2;
+const SCORE_BASE = 12 * SCORE_SCALE;
 /** Added on top of the base, scaled by how flush the landing was. */
-const SCORE_CLEAN = 10;
+const SCORE_CLEAN = 10 * SCORE_SCALE;
 /** ~4x a clean sloppy landing before the streak multiplier even starts. */
-const SCORE_PERFECT = 50;
+const SCORE_PERFECT = 50 * SCORE_SCALE;
 const MULT_CAP = 8;
 const MILESTONE_EVERY = 10;
-const SCORE_MILESTONE = 100;
+const SCORE_MILESTONE = 100 * SCORE_SCALE;
 
 // --- Camera ----------------------------------------------------------------
 /** Settles a 34px step in ~0.3s: visibly a camera move, never a lag. */

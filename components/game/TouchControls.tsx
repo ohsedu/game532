@@ -135,7 +135,7 @@ export default function TouchLayer({
     mode === "sector" ? (
       <DPad accent={accent} input={input} disabled={disabled} />
     ) : mode === "jump-slide" || mode === "jump-slide-dash" ? (
-      <ActionButton accent={accent} input={input} disabled={disabled} label="JUMP" big />
+      <TapButton accent={accent} input={input} disabled={disabled} label="JUMP" arrow="ArrowUp" big />
     ) : mode === "action" ? (
       <ActionButton accent={accent} input={input} disabled={disabled} label="TAP" big />
     ) : (
@@ -259,19 +259,24 @@ function TapButton({
   disabled,
   label,
   arrow,
+  big,
 }: {
   accent: string;
   input: InputManager | null;
   disabled: boolean;
   label: string;
   arrow: ArrowKey;
+  big?: boolean;
 }) {
   return (
     <button
       type="button"
       disabled={disabled}
       className={
-        "pointer-events-auto flex h-[var(--boost-size)] w-[var(--boost-size)] touch-none select-none items-center justify-center rounded-full border-2 bg-white/55 text-xs backdrop-blur-[2px] transition-transform active:scale-90 " +
+        "pointer-events-auto flex touch-none select-none items-center justify-center rounded-full border-2 bg-white/55 backdrop-blur-[2px] transition-transform active:scale-90 " +
+        (big
+          ? "h-[var(--action-size)] w-[var(--action-size)] text-sm "
+          : "h-[var(--boost-size)] w-[var(--boost-size)] text-xs ") +
         (disabled ? "opacity-0" : "opacity-100")
       }
       style={{ borderColor: accent + "55", color: accent }}

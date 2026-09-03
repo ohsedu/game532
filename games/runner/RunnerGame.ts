@@ -313,7 +313,7 @@ const GAP_TIME_FROM = 2.05;
  * Where the warm-up hands over. Stage 1 stays loose enough to teach the jump;
  * everything after it is the squeeze.
  */
-const GAP_TIME_AT_STAGE1 = 1.7;
+const GAP_TIME_AT_STAGE1 = 1.55;
 const GAP_TIME_TO = 0.8;
 /**
  * Seconds AFTER stage 1 to close the whole distance.
@@ -325,7 +325,7 @@ const GAP_TIME_TO = 0.8;
  * the escalation is handed to bursts, which are allowed inside that floor
  * because the whole wave is telegraphed at once.
  */
-const GAP_TIME_SECONDS = 32;
+const GAP_TIME_SECONDS = 20;
 /**
  * Jitter narrows with the ramp but never anneals away.
  *
@@ -343,15 +343,15 @@ const JITTER_TO = 0.46;
  * fairness (the clamp still has the last word) and pulls the median down, which
  * is the half of "make it harder" that widening alone does not deliver.
  */
-const JITTER_SHORT = 0.55;
-const JITTER_LONG = 0.45;
+const JITTER_SHORT = 0.7;
+const JITTER_LONG = 0.38;
 /**
  * How often a gap is replaced by a breather, and how much longer it runs.
  *
  * A pause is not a gift: the cluster after it reads as sudden precisely because
  * the cadence just stopped, and a rhythm with holes in it cannot be memorised.
  */
-const BREATHER_CHANCE = 0.17;
+const BREATHER_CHANCE = 0.12;
 const BREATHER_MIN = 0.4;
 const BREATHER_MAX = 0.95;
 
@@ -376,12 +376,32 @@ const PAIR_CHANCE_TO = 0.66;
 const PAIR_CHANCE_SECONDS = 55;
 /** Hard cap on members in one wave. Four presses is already a mouthful. */
 const BURST_LEN_MAX = 4;
+
+// --- Tempo ------------------------------------------------------------------
+/**
+ * Obstacles arrive in random tempo blocks rather than on a ramp.
+ *
+ * A gap that is only ever "the current ramp plus jitter" is still a beat: the
+ * player stops reading obstacles and starts playing the metronome, which is why
+ * tightening the ramp alone kept failing to make this harder. A block of 2-5
+ * spawns commits to a tempo — a rush that sits on the floor, an ordinary
+ * stretch, or a lull — and then re-rolls. The surprise is the CHANGE, so the
+ * lull earns its keep: it is what makes the next rush land.
+ */
+const TEMPO_RUSH = 0.42;
+const TEMPO_LULL = 1.75;
+/** Odds of a rush block, climbing as the run goes on. */
+const RUSH_ODDS_FROM = 0.16;
+const RUSH_ODDS_TO = 0.62;
+const RUSH_ODDS_SECONDS = 70;
+/** Lull odds stay flat: past a point it is the only thing left to contrast. */
+const LULL_ODDS = 0.16;
 /**
  * Seconds after the burst stage unlocks per extra member the cap allows. Waves
  * open as pairs and grow into four-beat runs, so the rhythm is something the
  * player learns a piece at a time rather than a wall that arrives whole.
  */
-const BURST_GROW_SECONDS = 26;
+const BURST_GROW_SECONDS = 18;
 /**
  * The breather, per extra member, added to the gap AFTER a wave.
  *
@@ -389,8 +409,13 @@ const BURST_GROW_SECONDS = 26;
  * floor followed by a beat of open floor reads as a pattern, and the same
  * cluster followed by the same tight gap reads as noise. It is paid on top of
  * the ordinary ramped gap, so it can only ever hand back room.
+ *
+ * Which is exactly why it is small. Scaling it by wave length meant every step
+ * up in burst size bought its own difficulty back, and growing waves faster
+ * made the game EASIER — measured, not guessed. The shape is worth keeping; the
+ * size of the refund is not.
  */
-const BREATHER_PER_LINK = 0.3;
+const BREATHER_PER_LINK = 0.12;
 
 // --- Obstacle sizing --------------------------------------------------------
 const BLOCK_H_MIN = 40;
@@ -589,6 +614,8 @@ const BANNER_Y = 74;
 // --- Score ------------------------------------------------------------------
 /** Floor pixels per point of distance score, i.e. 10px = 1m. */
 const PX_PER_METER = 10;
+/** Everything the run earns, scaled down together so bonuses keep their weight. */
+const SCORE_SCALE = 0.1;
 /** Vertical gap over a block, or above a pit lip, that counts as a near miss. */
 const NEAR_GAP = 26;
 /** Runway still left when the slide started, for a beam near miss. */
@@ -822,6 +849,9 @@ export class RunnerGame extends BaseGame {
   private coinCursor = 0;
   /** Floor distance still to travel before the next obstacle is born. */
   private toNextSpawn = 0;
+  /** Spawns left in the current tempo block, and its gap multiplier. */
+  private tempoLeft = 0;
+  private tempoMul = 1;
   private lastKind: ObstacleKind = KIND_BLOCK;
   /** Decided one spawn ahead: the gap being booked has two ends, not one. */
   private nextKind: ObstacleKind = KIND_BLOCK;
@@ -911,6 +941,8 @@ export class RunnerGame extends BaseGame {
     // A short runway on top of the ~2.3s an obstacle needs to travel in from
     // SPAWN_X. OPENING_GRACE is covered several times over.
     this.toNextSpawn = SPEED_FROM * 0.35;
+    this.tempoLeft = 0;
+    this.tempoMul = 1;
     this.lastKind = KIND_BLOCK;
     this.nextKind = KIND_BLOCK;
 
@@ -965,7 +997,9 @@ export class RunnerGame extends BaseGame {
     this.dist += this.speed * dt;
     // Assigned rather than accumulated: distance is the source of truth, so a
     // near-miss bonus can never drift away from the metres actually run.
-    this.rawScore = this.dist / PX_PER_METER + this.bonus;
+    // A tenth of the old scale: distance alone was minting five figures a
+    // minute, which drowned out every bonus the run actually earned.
+    this.rawScore = (this.dist / PX_PER_METER + this.bonus) * SCORE_SCALE;
 
     this.legPhase += this.speed * dt * 0.048;
     if (this.bannerT > 0) this.bannerT -= dt;
@@ -1328,14 +1362,39 @@ export class RunnerGame extends BaseGame {
       after <= 0
         ? JITTER_FROM
         : rampLinear(after, JITTER_FROM, JITTER_TO, GAP_TIME_SECONDS);
+    if (this.tempoLeft <= 0) this.rollTempo();
+    this.tempoLeft--;
+
     let gap =
       base + randRange(-jitterSpan * JITTER_SHORT, jitterSpan * JITTER_LONG);
-    if (Math.random() < BREATHER_CHANCE) {
+    // A rush is the whole point of committing to a tempo; handing it a breather
+    // would be undoing it one spawn in eight.
+    if (this.tempoMul >= 1 && Math.random() < BREATHER_CHANCE) {
       gap += randRange(BREATHER_MIN, BREATHER_MAX);
     }
+    gap *= this.tempoMul;
     // The floor is the only thing between the short tail and an unanswerable
     // spawn, so it clamps last and unconditionally.
     return Math.max(floor, gap);
+  }
+
+  /**
+   * Picks the next tempo block. Rushes get commoner as the run goes on; lulls
+   * stay rare and constant, because their job is contrast, not rest.
+   */
+  private rollTempo(): void {
+    const rush = rampLinear(this.elapsed, RUSH_ODDS_FROM, RUSH_ODDS_TO, RUSH_ODDS_SECONDS);
+    const r = Math.random();
+    if (r < rush) {
+      this.tempoMul = TEMPO_RUSH;
+      this.tempoLeft = randInt(2, 5);
+    } else if (r < rush + LULL_ODDS) {
+      this.tempoMul = TEMPO_LULL;
+      this.tempoLeft = randInt(1, 2);
+    } else {
+      this.tempoMul = 1;
+      this.tempoLeft = randInt(2, 4);
+    }
   }
 
   /**
@@ -1861,7 +1920,7 @@ export class RunnerGame extends BaseGame {
   }
 
   private updateRunner(dt: number): void {
-    const action = this.input.justActioned();
+    const action = this.input.justPressed("ArrowUp");
     const downHeld = this.input.isDown("ArrowDown");
     const downEdge = this.input.justPressed("ArrowDown");
     // ArrowRight is the dash on desktop and the DASH button on touch; both
@@ -1896,7 +1955,7 @@ export class RunnerGame extends BaseGame {
 
     // Variable height: releasing while rising loads extra gravity for the rest
     // of the climb. Latched, so re-pressing mid-air cannot restore the float.
-    if (this.airborne && this.vy < 0 && !this.input.isBoosting()) this.jumpCut = true;
+    if (this.airborne && this.vy < 0 && !this.input.isDown("ArrowUp")) this.jumpCut = true;
 
     if (this.airborne) {
       if (downHeld && this.vy > -80) {
