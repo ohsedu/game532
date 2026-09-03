@@ -3,8 +3,10 @@ import { revalidatePath } from "next/cache";
 import { isGameId, type GameId } from "@/types/game";
 import { NICKNAME_MAX, SCORE_MAX, type RankingEntry } from "@/types/score";
 import { sanitizeNickname } from "@/lib/format";
+import { RANKING_LIMIT, toEntries } from "@/lib/ranking";
 import {
   getReadClient,
+  getRequestUser,
   getWriteClient,
   isReadConfigured,
   isWriteConfigured,
@@ -13,8 +15,6 @@ import { clientIp, rateLimit } from "@/lib/rateLimit";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
-
-const RANKING_LIMIT = 100;
 
 /**
  * Per-game plausibility ceilings.
@@ -41,6 +41,16 @@ function bad(message: string, status = 400) {
   return NextResponse.json({ error: message }, { status });
 }
 
+/**
+ * The ranking for one game.
+ *
+ * ★ This response is cached and shared between visitors, so it must not depend
+ *   on who asked — and must never read the session. `game_ranking` is written
+ *   to be viewer-independent for exactly this reason: it returns the same rows
+ *   to everyone, and the browser decides which row is its own. Touching
+ *   getRequestUser here would let a token refresh attach a Set-Cookie header to
+ *   a cached response and hand one player's session to the next.
+ */
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
   const gameId = searchParams.get("gameId");
@@ -55,26 +65,17 @@ export async function GET(request: Request) {
   const supabase = getReadClient();
   if (!supabase) return bad("데이터베이스에 연결할 수 없습니다.", 503);
 
-  const { data, error } = await supabase
-    .from("scores")
-    .select("nickname, score, created_at")
-    .eq("game_id", gameId)
-    // Ties go to whoever recorded it first.
-    .order("score", { ascending: false })
-    .order("created_at", { ascending: true })
-    .limit(RANKING_LIMIT);
+  const { data, error } = await supabase.rpc("game_ranking", {
+    p_game_id: gameId,
+    p_limit: RANKING_LIMIT,
+  });
 
   if (error) {
     console.error("[api/scores] ranking query failed:", error.message);
     return bad("랭킹을 불러오지 못했습니다.", 502);
   }
 
-  const entries: RankingEntry[] = (data ?? []).map((row, i) => ({
-    rank: i + 1,
-    nickname: row.nickname as string,
-    score: row.score as number,
-    createdAt: row.created_at as string,
-  }));
+  const entries = toEntries(data ?? []);
 
   return NextResponse.json(
     { configured: true, entries },
@@ -113,9 +114,33 @@ export async function POST(request: Request) {
   const gameId = raw.gameId;
   if (!isGameId(gameId)) return bad("gameId가 올바르지 않습니다.");
 
-  if (typeof raw.nickname !== "string") return bad("닉네임이 필요합니다.");
-  const nickname = sanitizeNickname(raw.nickname, NICKNAME_MAX);
-  if (nickname.length === 0) return bad("닉네임을 입력해주세요.");
+  /*
+   * Who this score belongs to.
+   *
+   * For a signed-in player the name comes from their talk532 profile, read
+   * here from the verified session. The body's nickname is ignored outright —
+   * "registers automatically under my nickname" only means anything if the
+   * nickname cannot be chosen by the sender, and a name the client supplies is
+   * a name anyone can supply. Posting under someone else's name would also
+   * attach it to their account, which is worse than a wrong leaderboard row.
+   *
+   * A member who has not chosen a nickname yet falls through to the guest path.
+   * They are gated on a nickname inside talk532, so this is the narrow window
+   * of someone who signed up and came straight here — they still get to type
+   * a name for the board, it just is not tied to the account.
+   */
+  const user = await getRequestUser();
+  const member = user?.nickname ? user : null;
+
+  let nickname: string;
+  if (member) {
+    nickname = sanitizeNickname(member.nickname as string, NICKNAME_MAX);
+    if (nickname.length === 0) return bad("닉네임을 확인할 수 없습니다.");
+  } else {
+    if (typeof raw.nickname !== "string") return bad("닉네임이 필요합니다.");
+    nickname = sanitizeNickname(raw.nickname, NICKNAME_MAX);
+    if (nickname.length === 0) return bad("닉네임을 입력해주세요.");
+  }
 
   const score = raw.score;
   if (typeof score !== "number" || !Number.isFinite(score)) return bad("점수가 올바르지 않습니다.");
@@ -143,9 +168,13 @@ export async function POST(request: Request) {
   const supabase = getWriteClient();
   if (!supabase) return bad("데이터베이스에 연결할 수 없습니다.", 503);
 
-  const { error } = await supabase
-    .from("scores")
-    .insert({ game_id: gameId, nickname, score });
+  // The row id comes back so the rank lookup below can find this exact
+  // submission instead of guessing by score and name.
+  const { data: inserted, error } = await supabase
+    .from("game_scores")
+    .insert({ game_id: gameId, user_id: member?.id ?? null, nickname, score })
+    .select("id")
+    .single();
 
   if (error) {
     console.error("[api/scores] insert failed:", error.message);
@@ -154,22 +183,47 @@ export async function POST(request: Request) {
 
   // The pages that show leaderboards cache them. Without this a player who has
   // just posted a record reloads and sees the old one, which reads as the query
-  // being broken rather than as a cache being young. The 30s window on the home
-  // page stays as a backstop for scores posted from other instances.
+  // being broken rather than as a cache being young.
   revalidatePath("/");
   revalidatePath("/ranking");
 
-  // Report back where the score landed so the client can jump to it.
-  const { count } = await supabase
-    .from("scores")
-    .select("id", { count: "exact", head: true })
-    .eq("game_id", gameId)
-    .gt("score", score);
+  /*
+   * Report back where the score landed so the client can jump to it.
+   *
+   * Counting rows above this score is no longer the answer: a member's earlier
+   * submissions are folded away in the ranking, so counting them would put a
+   * player who just beat their own record several places below where the board
+   * actually shows them. Asking the ranking function is the only way to get a
+   * number that matches what they are about to see.
+   *
+   * A member is found by account, not by row — the board shows their best, and
+   * if this run did not beat it, the honest answer is where they still stand.
+   *
+   * A rank of 0 means the row is not on the board at all: outside the top 100.
+   * The panel says so rather than inventing a position.
+   */
+  const { data: ranked, error: rankError } = await supabase.rpc("game_ranking", {
+    p_game_id: gameId,
+    p_limit: RANKING_LIMIT,
+  });
+
+  let rank = 0;
+  if (rankError) {
+    console.error("[api/scores] rank lookup failed:", rankError.message);
+  } else {
+    const rows = (ranked ?? []) as { id: number; rank: number; user_id: string | null }[];
+    const mine = member
+      ? rows.find((r) => r.user_id === member.id)
+      : rows.find((r) => r.id === inserted.id);
+    rank = mine?.rank ?? 0;
+  }
 
   return NextResponse.json({
     ok: true,
     nickname,
     score,
-    rank: (count ?? 0) + 1,
+    rank,
+    /** So the panel can say whether it registered under an account or a typed name. */
+    member: Boolean(member),
   });
 }

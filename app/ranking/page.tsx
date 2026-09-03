@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { isGameId, type GameId } from "@/types/game";
 import { GAME_LIST } from "@/games/registry";
+import AuthButton from "@/components/home/AuthButton";
 import RankingTable from "@/components/ranking/RankingTable";
 import { getRanking } from "@/lib/ranking";
 
@@ -30,13 +31,20 @@ export default async function RankingPage({ searchParams }: PageProps<"/ranking"
 
   return (
     <main className="mx-auto flex w-full max-w-3xl flex-1 flex-col px-6 py-12 sm:py-16">
-      <nav className="mb-8">
+      {/*
+        Sign-in belongs on this page too, not just the home page: the "대화하기"
+        buttons below are the one place a player finds out an account is worth
+        having, and sending them home to sign in loses the game tab they were
+        looking at.
+      */}
+      <nav className="mb-8 flex items-center justify-between gap-4">
         <Link
           href="/"
           className="pill border border-line bg-surface px-4 py-2 text-xs text-ink-dim transition-colors hover:border-line-strong hover:text-ink"
         >
           ← 게임 선택
         </Link>
+        <AuthButton />
       </nav>
 
       <header className="animate-rise text-center">

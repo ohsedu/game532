@@ -5,6 +5,8 @@ import { useEffect, useRef, useState } from "react";
 import type { GameId, GameMeta } from "@/types/game";
 import type { RankingEntry } from "@/types/score";
 import { formatDate, formatScore } from "@/lib/format";
+import { DEFAULT_AVATAR_URL, directMessageUrl, talkAvatarUrl } from "@/lib/talk";
+import { usePlayer } from "@/lib/usePlayer";
 
 interface RankingTableProps {
   games: readonly GameMeta[];
@@ -25,6 +27,38 @@ const MEDALS: Record<number, { emoji: string; color: string }> = {
   3: { emoji: "🥉", color: "#e0a173" },
 };
 
+/** The talk532 avatar next to a member's name. Nothing at all for a guest. */
+function RowFace({ entry }: { entry: RankingEntry }) {
+  if (!entry.userId) return null;
+
+  const src = talkAvatarUrl(entry.avatarIcon, entry.avatarImage);
+
+  return (
+    <span className="h-7 w-7 shrink-0 overflow-hidden rounded-full bg-surface-2">
+      {src ? (
+        // Storage paths and another origin's static files; next/image handles
+        // neither. Lazy because a hundred of these load at once.
+        // eslint-disable-next-line @next/next/no-img-element
+        <img
+          src={src}
+          alt=""
+          className="h-full w-full object-cover"
+          loading="lazy"
+          decoding="async"
+          onError={(e) => {
+            const el = e.currentTarget;
+            if (el.src !== DEFAULT_AVATAR_URL) el.src = DEFAULT_AVATAR_URL;
+          }}
+        />
+      ) : (
+        <span className="flex h-full w-full items-center justify-center text-sm">
+          {entry.avatarIcon}
+        </span>
+      )}
+    </span>
+  );
+}
+
 export default function RankingTable({
   games,
   initialGameId,
@@ -44,6 +78,16 @@ export default function RankingTable({
         }
   );
   const state: LoadState = loaded[gameId] ?? { kind: "loading" };
+
+  /*
+   * Who is looking, used for one thing only: hiding "대화하기" on their own row.
+   *
+   * The ranking itself says nothing about the viewer — that is what lets it be
+   * cached and shared. This is the half that cannot be, and it is decided here
+   * rather than on the server for the same reason.
+   */
+  const me = usePlayer();
+  const myId = me.kind === "member" ? me.player.id : null;
 
   // Tracks which tab arrived with the page, so the effect can skip re-fetching
   // it on mount and then behave normally for every later switch.
@@ -173,10 +217,22 @@ export default function RankingTable({
           <ol className="max-h-[60vh] divide-y divide-line overflow-y-auto">
             {state.entries.map((e) => {
               const medal = MEDALS[e.rank];
+              /*
+               * "대화하기" appears on a row when the database handed back an
+               * account id, which it only does for members who leave
+               * themselves findable in talk532 — a row with no id is either a
+               * guest or someone who turned that off, and both must look the
+               * same here.
+               *
+               * Never on the viewer's own row: start_direct_room refuses a room
+               * with yourself, so it would be a button that only errors.
+               */
+              const canTalk = Boolean(e.userId) && e.userId !== myId;
+
               return (
                 <li
-                  key={e.rank}
-                  className="flex items-center gap-4 px-6 py-3.5 transition-colors hover:bg-surface-2"
+                  key={e.id}
+                  className="flex items-center gap-3 px-4 py-3.5 transition-colors hover:bg-surface-2 sm:gap-4 sm:px-6"
                   style={medal ? { backgroundColor: medal.color + "0f" } : undefined}
                 >
                   <span className="num w-8 shrink-0 text-center text-sm font-semibold text-ink-faint">
@@ -188,11 +244,37 @@ export default function RankingTable({
                       e.rank
                     )}
                   </span>
-                  <span className="min-w-0 flex-1 truncate text-sm text-ink">{e.nickname}</span>
+
+                  <RowFace entry={e} />
+
+                  <span className="min-w-0 flex-1 truncate text-sm text-ink">
+                    {e.nickname}
+                    {e.userId === myId && myId !== null ? (
+                      <span className="ml-1.5 text-[11px] text-primary">나</span>
+                    ) : null}
+                  </span>
+
+                  {canTalk ? (
+                    /*
+                     * A link, not a button: the room is opened by talk532 with
+                     * its own session, because that is the only side allowed to
+                     * decide whether this person accepts messages. Same tab —
+                     * a new one would leave two copies of the chat app running
+                     * with disagreeing unread badges.
+                     */
+                    <a
+                      href={directMessageUrl(e.userId as string)}
+                      className="pill shrink-0 border border-primary-soft bg-primary-soft px-3 py-1.5 text-[11px] text-primary transition-colors hover:bg-primary hover:text-white"
+                      title={`${e.nickname}님과 1:1 대화`}
+                    >
+                      대화하기
+                    </a>
+                  ) : null}
+
                   <span className="num hidden text-[11px] text-ink-faint sm:block">
                     {formatDate(e.createdAt)}
                   </span>
-                  <span className="num w-24 shrink-0 text-right text-sm font-semibold text-ink">
+                  <span className="num w-20 shrink-0 text-right text-sm font-semibold text-ink sm:w-24">
                     {formatScore(e.score)}
                   </span>
                 </li>

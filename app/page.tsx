@@ -1,4 +1,5 @@
 import Link from "next/link";
+import AuthButton from "@/components/home/AuthButton";
 import GameCard from "@/components/home/GameCard";
 import { GAME_LIST } from "@/games/registry";
 import { getTopScores } from "@/lib/topScores";
@@ -20,7 +21,20 @@ export default async function HomePage() {
 
   return (
     <main className="mx-auto flex w-full max-w-6xl flex-1 flex-col px-6 pt-8 pb-16 sm:pt-12 sm:pb-24">
-      <header className="animate-rise text-center">
+      {/*
+        Sign-in sits above the title rather than inside it. The title block is
+        centred, and dropping a right-aligned control into it either pushes the
+        wordmark off centre or has to be absolutely positioned over it — which
+        overlaps the wordmark on a narrow phone.
+
+        It renders nothing until the session cookie has been read, so it never
+        flashes the wrong state. The reserved 44px keeps this row from jumping.
+      */}
+      <div className="flex justify-end">
+        <AuthButton />
+      </div>
+
+      <header className="animate-rise mt-2 text-center">
         <span className="pill inline-block bg-primary-soft px-5 py-2 text-sm text-primary">
           간단하게 즐기는 미니게임
         </span>

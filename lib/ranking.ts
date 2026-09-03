@@ -11,12 +11,47 @@ export interface RankingResult {
   entries: RankingEntry[];
 }
 
+/** One row as `game_ranking` returns it. */
+export interface RankingRow {
+  id: number;
+  rank: number;
+  nickname: string;
+  score: number;
+  created_at: string;
+  user_id: string | null;
+  avatar_icon: string | null;
+  avatar_image: string | null;
+}
+
+/**
+ * Maps `game_ranking` rows to what the table renders. Shared by the ranking
+ * page and the API route so there is one definition of what a ranking is.
+ */
+export function toEntries(rows: readonly RankingRow[]): RankingEntry[] {
+  return rows.map((row) => ({
+    id: row.id,
+    rank: row.rank,
+    nickname: row.nickname,
+    score: row.score,
+    createdAt: row.created_at,
+    userId: row.user_id,
+    avatarIcon: row.avatar_icon,
+    avatarImage: row.avatar_image,
+  }));
+}
+
 /**
  * Top scores for one game.
  *
- * Shared by the ranking page and the API route so there is one definition of
- * what a ranking is — in particular the tiebreak, which has to match everywhere
- * or the same score jumps position depending on which path fetched it.
+ * The ordering, the tiebreak, and the folding of a member's many submissions
+ * down to their single best all live in `game_ranking` rather than here. They
+ * have to match everywhere or the same score jumps position depending on which
+ * path fetched it, and the folding in particular cannot be expressed through
+ * the Supabase query builder at all.
+ *
+ * The function deliberately does not look at who is asking, so this result is
+ * the same for every viewer and stays cacheable. "This row is me" is decided in
+ * the browser from its own session.
  */
 export async function getRanking(gameId: GameId): Promise<RankingResult> {
   if (!isReadConfigured()) return { configured: false, entries: [] };
@@ -24,26 +59,15 @@ export async function getRanking(gameId: GameId): Promise<RankingResult> {
   const supabase = getReadClient();
   if (!supabase) return { configured: false, entries: [] };
 
-  const { data, error } = await supabase
-    .from("scores")
-    .select("nickname, score, created_at")
-    .eq("game_id", gameId)
-    // Ties go to whoever recorded it first.
-    .order("score", { ascending: false })
-    .order("created_at", { ascending: true })
-    .limit(RANKING_LIMIT);
+  const { data, error } = await supabase.rpc("game_ranking", {
+    p_game_id: gameId,
+    p_limit: RANKING_LIMIT,
+  });
 
   if (error) {
     console.error("[ranking] " + gameId + " query failed:", error.message);
     throw new Error("ranking query failed");
   }
 
-  const entries: RankingEntry[] = (data ?? []).map((row, i) => ({
-    rank: i + 1,
-    nickname: row.nickname as string,
-    score: row.score as number,
-    createdAt: row.created_at as string,
-  }));
-
-  return { configured: true, entries };
+  return { configured: true, entries: toEntries((data ?? []) as RankingRow[]) };
 }
