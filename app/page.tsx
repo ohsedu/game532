@@ -1,6 +1,7 @@
 import Link from "next/link";
 import AuthButton from "@/components/home/AuthButton";
 import GameCard from "@/components/home/GameCard";
+import MessageBell from "@/components/home/MessageBell";
 import { GAME_LIST } from "@/games/registry";
 import { getTopScores } from "@/lib/topScores";
 
@@ -29,8 +30,12 @@ export default async function HomePage() {
 
         It renders nothing until the session cookie has been read, so it never
         flashes the wrong state. The reserved 44px keeps this row from jumping.
+
+        메시지함은 로그인한 사람에게만 선다. 그 자리가 비어도 줄 높이는 옆의
+        로그인 버튼이 잡고 있어서 흔들리지 않는다.
       */}
-      <div className="flex justify-end">
+      <div className="flex items-center justify-end gap-2">
+        <MessageBell />
         <AuthButton />
       </div>
 

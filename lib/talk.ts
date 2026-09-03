@@ -125,3 +125,17 @@ export function talkAvatarUrl(
 export const DEFAULT_AVATAR = "01_default.png";
 
 export const DEFAULT_AVATAR_URL = TALK_ORIGIN + "/avatars/" + DEFAULT_AVATAR;
+
+/**
+ * 그 대화방을 여는 주소.
+ *
+ * talk532 는 방을 `/room/<코드>` 로 연다 — 대시보드를 거치지 않고 바로 그 방이
+ * 서는 자리라, 메시지함에서 한 줄을 눌렀을 때 목록을 한 번 더 보여 주지 않는다.
+ *
+ * 특정 **메시지**로 내려가는 주소는 저쪽에 없다(도착지는 대시보드 안의 상태로만
+ * 전해진다). 그래서 여기서 데려다줄 수 있는 가장 가까운 자리가 그 방이고,
+ * 안 읽은 말은 어차피 방을 열면 맨 아래에 있다.
+ */
+export function roomUrl(code: string): string {
+  return TALK_ORIGIN + "/room/" + encodeURIComponent(code.toUpperCase());
+}

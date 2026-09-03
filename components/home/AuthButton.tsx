@@ -2,72 +2,11 @@
 
 import { useEffect, useRef, useState } from "react";
 import { getBrowserClient } from "@/lib/supabase/client";
-import {
-  DEFAULT_AVATAR_URL,
-  TALK_ORIGIN,
-  loginUrl,
-  talkAvatarUrl,
-} from "@/lib/talk";
+import { TALK_ORIGIN, loginUrl } from "@/lib/talk";
 import { usePlayer } from "@/lib/usePlayer";
-
-/**
- * The signed-out face: a plain grey silhouette with a "로그인" label.
- *
- * Deliberately the same silhouette talk532 gives an account that has not
- * chosen a picture, so the two sites read as one login.
- */
-function GuestFace() {
-  return (
-    <svg viewBox="0 0 32 32" className="h-full w-full" aria-hidden="true">
-      <circle cx="16" cy="16" r="16" fill="#e9ebf1" />
-      <circle cx="16" cy="12.6" r="5.2" fill="#b9c0cf" />
-      <path d="M4.8 29.5a11.2 11.2 0 0 1 22.4 0z" fill="#b9c0cf" />
-    </svg>
-  );
-}
-
-/**
- * The avatar for a signed-in player, taken from their talk532 profile.
- *
- * A profile can still hold an emoji from before talk532 moved to picture
- * avatars — `talkAvatarUrl` returns null for those and the character is drawn
- * as text instead. onError covers the other direction: a preset filename this
- * app does not have a matching file for falls back to the silhouette rather
- * than leaving a broken image in the header.
- */
-function MemberFace({
-  icon,
-  image,
-}: {
-  icon: string | null;
-  image: string | null;
-}) {
-  const src = talkAvatarUrl(icon, image);
-
-  if (!src) {
-    return (
-      <span className="flex h-full w-full items-center justify-center bg-surface-2 text-base">
-        {icon}
-      </span>
-    );
-  }
-
-  return (
-    // Not next/image: these are Supabase Storage paths and files served by
-    // another origin, neither of which it can optimise.
-    // eslint-disable-next-line @next/next/no-img-element
-    <img
-      src={src}
-      alt=""
-      className="h-full w-full object-cover"
-      decoding="async"
-      onError={(e) => {
-        const el = e.currentTarget;
-        if (el.src !== DEFAULT_AVATAR_URL) el.src = DEFAULT_AVATAR_URL;
-      }}
-    />
-  );
-}
+// 얼굴을 그리는 일은 메시지함도 한다(줄마다 보낸 사람이 있다). 같은 프로필을
+// 두 곳에서 그리게 되면서 TalkAvatar 로 옮겼다.
+import { GuestFace, MemberFace } from "./TalkAvatar";
 
 /**
  * Top-right sign-in control.

@@ -1,6 +1,6 @@
 "use client";
 
-import { RefObject, useCallback, useEffect, useRef } from "react";
+import { ReactNode, RefObject, useCallback, useEffect, useRef } from "react";
 import type { TouchMode } from "@/types/game";
 import type { ArrowKey, InputManager } from "@/games/core/InputManager";
 import { VirtualStick } from "@/games/core/VirtualStick";
@@ -33,6 +33,59 @@ const REVERSE_SPEED = 240;
  * phone (globals.css), and the knob must stay inside on both.
  */
 const KNOB_TRAVEL = 18;
+
+/**
+ * 부스터 — 번개.
+ *
+ * 글자를 그림으로 바꾼 이유는 엄지 밑이라서다. 누르는 순간 손가락이 버튼을 거의
+ * 덮어서 남는 것은 가장자리 몇 밀리뿐인데, 다섯 글자는 그 상태에서 읽히지 않고
+ * 모양만으로도 구별되지 않는다. 번개와 빔은 실루엣이 서로 달라서, 곁눈으로도
+ * 어느 쪽을 누르는지 안다.
+ *
+ * 색은 정하지 않는다(currentColor). 버튼이 게임마다 제 accent 색을 입는다.
+ */
+function BoostIcon() {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      className="h-[44%] w-[44%]"
+      fill="currentColor"
+      aria-hidden="true"
+    >
+      <path d="M13 2 4 14h6l-1 8 9-12h-6z" />
+    </svg>
+  );
+}
+
+/**
+ * 레이저 — 앞장서는 구슬과 뒤로 끌리는 빔.
+ *
+ * 게임 화면에 그려지는 그 자국과 같은 모양이다(games/dodge). 버튼과 판이 같은
+ * 그림을 쓰면 처음 누른 사람도 방금 무엇이 나갔는지 잇는다.
+ */
+function LaserIcon() {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      className="h-[44%] w-[44%]"
+      fill="none"
+      aria-hidden="true"
+    >
+      <g stroke="currentColor" strokeLinecap="round">
+        {/* 꼬리. 두 토막으로 끊어 그리면 날아가는 쪽이 읽힌다. */}
+        <path d="M1.8 12h3.4" strokeWidth="2.4" opacity="0.4" />
+        <path d="M7.6 12h4.2" strokeWidth="2.4" opacity="0.75" />
+        {/* 구슬에서 터지는 빛 */}
+        <path
+          d="M17 4.8V3M17 21v-1.8M21.2 12H23"
+          strokeWidth="1.8"
+          opacity="0.7"
+        />
+      </g>
+      <circle cx="17" cy="12" r="3.4" fill="currentColor" />
+    </svg>
+  );
+}
 
 /**
  * Touch controls for the game screen.
@@ -176,11 +229,31 @@ export default function TouchLayer({
       // Boost stays where the thumb already expects it; the laser sits above,
       // so reaching for the rarer move can never land on the common one.
       <div className="flex flex-col items-center gap-2">
-        <SpecialButton accent={accent} input={input} disabled={disabled} label="LASER" />
-        <ActionButton accent={accent} input={input} disabled={disabled} label="BOOST" />
+        <SpecialButton
+          accent={accent}
+          input={input}
+          disabled={disabled}
+          label="LASER"
+          icon={<LaserIcon />}
+        />
+        <ActionButton
+          accent={accent}
+          input={input}
+          disabled={disabled}
+          label="BOOST"
+          icon={<BoostIcon />}
+        />
       </div>
     ) : (
-      <ActionButton accent={accent} input={input} disabled={disabled} label="BOOST" />
+      // 똥 피하기의 부스터도 같은 그림이다 — 같은 버튼을 두 게임이 서로 다르게
+      // 그리면, 한 판 하고 넘어온 사람이 같은 자리에서 다시 읽어야 한다.
+      <ActionButton
+        accent={accent}
+        input={input}
+        disabled={disabled}
+        label="BOOST"
+        icon={<BoostIcon />}
+      />
     );
 
   return (
@@ -241,11 +314,14 @@ function SpecialButton({
   input,
   disabled,
   label,
+  icon,
 }: {
   accent: string;
   input: InputManager | null;
   disabled: boolean;
   label: string;
+  /** 있으면 글자 대신 이것을 그린다. 부르는 이름은 aria-label 이 계속 들고 있다. */
+  icon?: ReactNode;
 }) {
   return (
     <button
@@ -263,7 +339,7 @@ function SpecialButton({
       }}
       aria-label={label}
     >
-      {label}
+      {icon ?? label}
     </button>
   );
 }
@@ -274,12 +350,15 @@ function ActionButton({
   disabled,
   label,
   big,
+  icon,
 }: {
   accent: string;
   input: InputManager | null;
   disabled: boolean;
   label: string;
   big?: boolean;
+  /** 있으면 글자 대신 이것을 그린다. 부르는 이름은 aria-label 이 계속 들고 있다. */
+  icon?: ReactNode;
 }) {
   const set = (down: boolean) => input?.setVirtualBoost(down);
   return (
@@ -304,7 +383,7 @@ function ActionButton({
       onPointerLeave={() => set(false)}
       aria-label={label}
     >
-      {label}
+      {icon ?? label}
     </button>
   );
 }

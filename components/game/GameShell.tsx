@@ -9,7 +9,9 @@ import type { InputManager } from "@/games/core/InputManager";
 import { commitBest } from "@/lib/localBest";
 import { useMyBest } from "@/lib/useMyBest";
 import { formatScore } from "@/lib/format";
+import { setNavGuard } from "@/lib/navGuard";
 import AuthButton from "@/components/home/AuthButton";
+import MessageBell from "@/components/home/MessageBell";
 import GameCanvas from "./GameCanvas";
 import GameHUD from "./GameHUD";
 import GameOver from "./GameOver";
@@ -24,8 +26,10 @@ const EMPTY_STATS: HudStat[] = [];
 
 /** Phone-side control hint, keyed by how the game takes touch input. */
 const TOUCH_HINT: Record<TouchMode, string> = {
-  joystick: "화면을 끌어서 이동 · BOOST 로 가속",
-  "joystick-laser": "화면을 끌어서 이동 · BOOST 가속 · LASER 발사",
+  // 이 둘의 버튼에는 글자가 없다(TouchControls 의 BoostIcon·LaserIcon). 안내가
+  // 화면에 없는 낱말을 부르면 찾다가 죽으므로, 그림을 부르는 말로 적는다.
+  joystick: "화면을 끌어서 이동 · 번개 버튼으로 가속",
+  "joystick-laser": "화면을 끌어서 이동 · 번개는 가속 · 위쪽은 레이저",
   sector: "적이 오는 쪽 화면을 탭",
   action: "TAP 버튼으로 조작",
   tap: "화면을 탭",
@@ -40,8 +44,8 @@ const TOUCH_HINT: Record<TouchMode, string> = {
  * The board is a fixed 1000x700 ratio, so constraining only its width lets a
  * short viewport push the hint line below the fold and force a scroll while
  * playing. Deriving the width from the leftover height instead keeps the whole
- * screen visible at any window size. 11rem covers the nav, the hint line (two
- * lines on mobile) and the vertical padding.
+ * screen visible at any window size. --board-reserve covers the account row,
+ * the nav, the hint line (two lines on mobile) and the vertical padding.
  */
 const BOARD_WIDTH = "min(100%, calc((100dvh - var(--board-reserve)) * 10 / 7))";
 
@@ -149,6 +153,30 @@ export default function GameShell({ meta }: { meta: GameMeta }) {
     };
   }, []);
 
+  /*
+   * 헤더의 메시지함에게 "지금은 한 판 중" 이라고 알려 둔다.
+   *
+   * 메시지 한 줄을 누르면 창이 통째로 웹톡532 로 옮겨 가고, 그 순간 도중이던
+   * 판은 점수도 기록도 남기지 못한 채 사라진다. 묻는 창은 그쪽이 세우고,
+   * 무엇을 잃는지는 이쪽만 안다 — 그래서 문구를 여기서 준다.
+   *
+   * 일시정지 중에도 건다. 멈춰 있을 뿐 아직 끝나지 않은 판이라 잃는 것은 같다.
+   * 정리 함수로 반드시 푼다 — 안 풀면 게임을 끝낸 뒤에도 계속 물어본다.
+   */
+  useEffect(() => {
+    if (phase !== "playing") return;
+    setNavGuard(() => {
+      /*
+       * 묻는 동안에도 총알은 날아온다 — 답을 고르다 죽으면 물어본 보람이 없다.
+       * 그래서 물음이 서는 순간 판을 세운다. 취소하면 일시정지 화면이 남고,
+       * 이어 하기는 거기서 누른다(창 포커스를 잃을 때와 같은 처리다).
+       */
+      if (!paused) pause();
+      return "게임을 진행 중이에요.\n지금 이동하면 이번 판은 기록되지 않아요.";
+    });
+    return () => setNavGuard(null);
+  }, [phase, paused, pause]);
+
   const handleGameOver = useCallback(
     (finalScore: number, elapsedSeconds: number) => {
       endingRef.current = true;
@@ -190,14 +218,27 @@ export default function GameShell({ meta }: { meta: GameMeta }) {
       }
     >
       {/*
-        A three-column grid rather than justify-between, so the title stays on
-        the board's centre line no matter how wide the two ends grow — which
-        they now do, because the avatar sits in the right one.
+        메시지함과 프로필은 판 위 오른쪽 끝, 홈 화면과 같은 자리에 선다.
 
-        The avatar goes in this row instead of a row of its own: an extra row
-        costs height, and the board's width is derived from the height left
-        over, so a 44px strip above would shrink the play area on every screen
-        to show something that fits here for nothing.
+        한때는 아래 nav 의 오른칸에 아바타만 끼워 두었다 — 줄 하나를 아끼려던
+        것이었는데, 배지가 붙는 메시지함까지 그 칸에 들어가면 눌러야 할 것이
+        셋이 되면서 가운데 제목이 판의 중심선에서 밀려난다. 두 화면이 같은
+        자리에 같은 둘을 두면 오갈 때 눈이 옮겨 다니지 않는 이점도 있다.
+
+        대신 줄 하나만큼 판이 작아진다. 그 높이는 --board-reserve 가 이미 세고
+        있고(globals.css), 가로로 눕힌 폰에서는 이 줄이 통째로 사라진다.
+      */}
+      <div
+        className="landscape-hide mx-auto mb-2 flex w-full items-center justify-end gap-2"
+        style={{ maxWidth: BOARD_WIDTH }}
+      >
+        <MessageBell />
+        <AuthButton />
+      </div>
+
+      {/*
+        A three-column grid rather than justify-between, so the title stays on
+        the board's centre line no matter how wide the two ends grow.
       */}
       <nav
         className="landscape-hide mx-auto mb-4 grid w-full grid-cols-[1fr_auto_1fr] items-center gap-3"
@@ -221,10 +262,6 @@ export default function GameShell({ meta }: { meta: GameMeta }) {
           >
             랭킹 →
           </Link>
-          {/* Hidden on a narrow phone, where the row has no space to spare. */}
-          <div className="hidden sm:block">
-            <AuthButton />
-          </div>
         </div>
       </nav>
 

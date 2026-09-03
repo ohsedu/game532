@@ -249,9 +249,13 @@ a {
 /* --- Board sizing / device orientation -------------------------------------
    The board is a fixed 1000x700 rectangle. `--board-reserve` is the vertical
    room the surrounding chrome needs; the board width is derived from whatever
-   height is left, so the whole screen always fits without scrolling. */
+   height is left, so the whole screen always fits without scrolling.
+
+   14rem = 계정 줄(메시지함·프로필) + nav + 조작 안내 + 위아래 여백. 11rem 이던
+   것을 계정 줄이 nav 밖으로 나오면서 3rem 올렸다 — 모자라면 판이 커지는 게
+   아니라 안내 줄이 화면 밖으로 밀려나 게임 중에 스크롤이 생긴다. */
 :root {
-  --board-reserve: 11rem;
+  --board-reserve: 14rem;
 }
 
 /* Phone in landscape: the viewport is only ~390-430px tall, so the desktop
