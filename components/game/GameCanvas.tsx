@@ -249,7 +249,13 @@ export default function GameCanvas({
   return (
     <canvas
       ref={canvasRef}
-      className="block h-full w-full touch-none select-none"
+      // In pointer mode the game draws its own crosshair, so the OS arrow is
+      // hidden over the board — two cursors is one too many. Overlays (pause,
+      // game over) are siblings above the canvas and keep their own cursor.
+      className={
+        "block h-full w-full touch-none select-none" +
+        (touch === "pointer" ? " cursor-none" : "")
+      }
       aria-label="게임 화면"
     />
   );

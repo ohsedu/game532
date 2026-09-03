@@ -3,6 +3,7 @@
 import { RefObject, useCallback, useEffect, useRef } from "react";
 import type { TouchMode } from "@/types/game";
 import type { ArrowKey, InputManager } from "@/games/core/InputManager";
+import { VirtualStick } from "@/games/core/VirtualStick";
 
 interface TouchLayerProps {
   mode: TouchMode;
@@ -13,9 +14,25 @@ interface TouchLayerProps {
 }
 
 /** Drag distance, in CSS px, before an axis engages. */
-const DEADZONE = 12;
-/** Past this the origin follows the thumb, so long drags keep steering. */
-const RADIUS = 52;
+const DEADZONE = 10;
+/**
+ * Past this the origin follows the thumb, so long drags keep steering.
+ *
+ * Down from 52. The origin trails the thumb by this much, and every reversal
+ * has to unwind it first — see VirtualStick for the full accounting.
+ */
+const RADIUS = 34;
+/** Reversal assist: origin moves this many times the thumb's motion against it. */
+const REVERSE_GAIN = 2;
+/** ...but only when the thumb is moving at least this fast, px/s. A tremor is slower. */
+const REVERSE_SPEED = 240;
+/**
+ * How far the knob graphic travels at full displacement. Cosmetic.
+ *
+ * Bounded by the ring: (stick − knob) / 2 is 24px on a tablet and 19px on a
+ * phone (globals.css), and the knob must stay inside on both.
+ */
+const KNOB_TRAVEL = 18;
 
 /**
  * Touch controls for the game screen.
@@ -44,7 +61,9 @@ export default function TouchLayer({
   const leftKnob = useRef<HTMLDivElement | null>(null);
   const activeKnob = useRef<HTMLDivElement | null>(null);
   const pointerId = useRef<number | null>(null);
-  const origin = useRef({ x: 0, y: 0 });
+  // Created on the first touch rather than in the initializer, so a render
+  // never allocates one that a desktop player will never use.
+  const stick = useRef<VirtualStick | null>(null);
 
   const inputRef = useRef(input);
   const disabledRef = useRef(disabled);
@@ -57,8 +76,9 @@ export default function TouchLayer({
 
   const setKnob = useCallback((knob: HTMLDivElement | null, dx: number, dy: number) => {
     if (!knob) return;
-    const d = Math.hypot(dx, dy);
-    const k = d > RADIUS ? RADIUS / d : 1;
+    // The stick clamps its displacement to RADIUS, so this maps the full range
+    // onto the knob's travel inside the ring instead of poking out of it.
+    const k = KNOB_TRAVEL / RADIUS;
     knob.style.transform =
       "translate(calc(-50% + " + dx * k + "px), calc(-50% + " + dy * k + "px))";
   }, []);
@@ -85,27 +105,22 @@ export default function TouchLayer({
       if ((e.target as HTMLElement | null)?.closest("button, a, input")) return;
       e.preventDefault();
       pointerId.current = e.pointerId;
-      origin.current = { x: e.clientX, y: e.clientY };
+      (stick.current ??= new VirtualStick(RADIUS, REVERSE_GAIN, REVERSE_SPEED)).begin(
+        e.clientX,
+        e.clientY,
+        e.timeStamp
+      );
       activeKnob.current = leftKnob.current;
     };
 
     const move = (e: PointerEvent) => {
       if (pointerId.current !== e.pointerId) return;
+      const s = stick.current;
+      if (!s) return;
       e.preventDefault();
-      let dx = e.clientX - origin.current.x;
-      let dy = e.clientY - origin.current.y;
-
-      const d = Math.hypot(dx, dy);
-      if (d > RADIUS) {
-        const pull = (d - RADIUS) / d;
-        origin.current.x += dx * pull;
-        origin.current.y += dy * pull;
-        dx = e.clientX - origin.current.x;
-        dy = e.clientY - origin.current.y;
-      }
-
-      inputRef.current?.setVirtualVector(dx, dy, DEADZONE);
-      setKnob(activeKnob.current, dx, dy);
+      s.move(e.clientX, e.clientY, e.timeStamp);
+      inputRef.current?.setVirtualVector(s.dx, s.dy, DEADZONE);
+      setKnob(activeKnob.current, s.dx, s.dy);
     };
 
     const end = (e: PointerEvent) => {

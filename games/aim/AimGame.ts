@@ -38,8 +38,17 @@ const C_BLOOM = "rgba(255,255,255,0.55)";
 const C_WHITE = "#ffffff";
 const C_GLOSS = "rgba(255,255,255,0.55)";
 const C_TRACK = "rgba(34,37,45,0.09)";
-const C_CROSS = withAlpha(INK, 0.34);
-const C_CROSS_SOFT = withAlpha(INK, 0.16);
+/**
+ * The crosshair IS the cursor — the canvas hides the OS pointer in this mode —
+ * so it has to be found in a glance against a light floor, over a target the
+ * same colour as itself, and over the dark ink of the HUD. A 34%-ink hairline,
+ * which is what it was, vanished on all three. Solid accent over a white halo
+ * survives every one: the halo separates it from a teal target, the accent
+ * from the floor and the ink.
+ */
+const C_CROSS = ACCENT;
+const C_CROSS_HALO = "rgba(255,255,255,0.92)";
+const C_CROSS_SOFT = withAlpha(ACCENT, 0.5);
 const C_DIM = "rgba(22,25,36,0.42)";
 const C_BAD_WASH = withAlpha(ACCENT, 0.1);
 const C_DECOY_SOFT = withAlpha(DECOY_LINE, 0.5);
@@ -1296,23 +1305,34 @@ export class AimGame extends BaseGame {
     const y = this.lastPy;
     if (x < 0) return;
     g.save();
-    g.strokeStyle = C_CROSS;
-    g.lineWidth = 1.6;
     g.lineCap = "round";
+    // One path, stroked twice: a wide white halo underneath, the accent on
+    // top. Two strokes of the same geometry is what gives a line an outline.
     g.beginPath();
-    g.arc(x, y, 13, 0, TAU);
-    g.moveTo(x - 21, y);
+    g.arc(x, y, 14, 0, TAU);
+    g.moveTo(x - 24, y);
     g.lineTo(x - 8, y);
     g.moveTo(x + 8, y);
-    g.lineTo(x + 21, y);
-    g.moveTo(x, y - 21);
+    g.lineTo(x + 24, y);
+    g.moveTo(x, y - 24);
     g.lineTo(x, y - 8);
     g.moveTo(x, y + 8);
-    g.lineTo(x, y + 21);
+    g.lineTo(x, y + 24);
+    g.strokeStyle = C_CROSS_HALO;
+    g.lineWidth = 6;
     g.stroke();
-    g.fillStyle = ACCENT;
+    g.strokeStyle = C_CROSS;
+    g.lineWidth = 2.6;
+    g.stroke();
+    // Centre dot, haloed the same way, so the exact aim point reads over a
+    // target of the same colour.
+    g.fillStyle = C_CROSS_HALO;
     g.beginPath();
-    g.arc(x, y, 2.2, 0, TAU);
+    g.arc(x, y, 4.2, 0, TAU);
+    g.fill();
+    g.fillStyle = C_CROSS;
+    g.beginPath();
+    g.arc(x, y, 2.6, 0, TAU);
     g.fill();
 
     // Recoil ring: the click is confirmed at the cursor even when it hit

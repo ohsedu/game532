@@ -16,7 +16,7 @@ import {
 } from "@/games/core/curve";
 import type { ParticleOptions, ParticleShape } from "@/games/core/Particles";
 import { drawGrid, roundRect, text, withAlpha, type TextOptions } from "@/games/core/draw";
-import { clamp, damp, dist, randInt, randRange } from "@/games/core/Vector2";
+import { clamp, dist, randInt, randRange } from "@/games/core/Vector2";
 import {
   CAN_BODY,
   CAN_OUTLINE,
@@ -91,17 +91,24 @@ const BODY_R = 11;
 /** The hitbox. Small enough that threading a 3-way spread is a real skill. */
 const CORE_R = 5;
 const MAX_SPEED = 330;
-/** 0 to full speed in ~0.14s. Any slower and dodging feels like steering a boat. */
-const ACCEL = 2400;
 /**
- * Reversing gets extra authority. Symmetric acceleration makes direction
- * changes, which are the entire verb of a bullet hell, feel mushy; a full
- * reversal gets 90% more push and lands in about the time of a standing start.
+ * Velocity IS the stick. No acceleration, no smoothing.
+ *
+ * Two models came before this. Thrust plus drag curved: a 90° turn got no
+ * brake bonus, because the new direction is orthogonal to the old velocity, so
+ * the kept component sailed on while the flipped one crawled through zero — a
+ * 76px arc that took half a second to settle. Then velocity chased the stick
+ * exponentially, 95% in three frames. Fine at cruise, still wrong under boost:
+ * the lag is |Δv| / rate, so at 1.7× speed a reversal drifted 19px along the
+ * old heading before the new one took, and every boosted turn read as a slide.
+ * Scaling the rate with speed is the same as not having one.
+ *
+ * So there is none. The player moves at direction × MAX_SPEED × boost from the
+ * frame the key is down, turns on a point, and stops on the frame it is up.
+ * This is what every bullet hell does, and it is the only model whose feel does
+ * not change with the speed multiplier. A sharp corner in the trail is a sharp
+ * corner in the path, which is the truth.
  */
-const BRAKE_BONUS = 0.9;
-/** Per-second smoothing lambdas: light while steering, hard on key release. */
-const DRAG_MOVING = 1.6;
-const DRAG_IDLE = 13;
 /** Keeps the body off the wall so edge-hugging still reads as a position. */
 const EDGE_MARGIN = 16;
 const INV_SQRT2 = 0.7071067811865476;
@@ -508,8 +515,7 @@ export class DodgeGame extends BaseGame {
   }
 
   private movePlayer(dt: number): void {
-    // Boost scales both thrust and the speed cap, so it feels like extra power
-    // rather than the same acceleration against a higher ceiling.
+    // Boost is a multiplier on the speed the stick maps to, nothing more.
     const boost = this.booster.update(dt, this.input.isBoosting());
     const ix = this.input.axisX();
     const iy = this.input.axisY();
@@ -521,29 +527,9 @@ export class DodgeGame extends BaseGame {
       dy *= INV_SQRT2;
     }
 
-    if (ix !== 0 || iy !== 0) {
-      let accel = ACCEL * boost;
-      const sp = Math.hypot(this.pvx, this.pvy);
-      if (sp > 1) {
-        const opposing = -(dx * this.pvx + dy * this.pvy) / sp;
-        if (opposing > 0) accel += ACCEL * boost * BRAKE_BONUS * opposing;
-      }
-      this.pvx += dx * accel * dt;
-      this.pvy += dy * accel * dt;
-      this.pvx = damp(this.pvx, 0, DRAG_MOVING, dt);
-      this.pvy = damp(this.pvy, 0, DRAG_MOVING, dt);
-    } else {
-      this.pvx = damp(this.pvx, 0, DRAG_IDLE, dt);
-      this.pvy = damp(this.pvy, 0, DRAG_IDLE, dt);
-    }
-
-    const speed = Math.hypot(this.pvx, this.pvy);
-    const cap = MAX_SPEED * boost;
-    if (speed > cap) {
-      const k = cap / speed;
-      this.pvx *= k;
-      this.pvy *= k;
-    }
+    const target = MAX_SPEED * boost;
+    this.pvx = dx * target;
+    this.pvy = dy * target;
 
     this.px += this.pvx * dt;
     this.py += this.pvy * dt;
@@ -567,7 +553,14 @@ export class DodgeGame extends BaseGame {
     this.core.x = this.px;
     this.core.y = this.py;
 
+    // Measured after the wall clamp on purpose: a component the wall just
+    // zeroed must not light the trail, or a player pinned in a corner sits in a
+    // cloud of exhaust while visibly not moving.
+    const speed = Math.hypot(this.pvx, this.pvy);
+
     // Trail density and length track speed, so velocity is readable at a glance.
+    // It turns red with the body while boosting: the trail is the exhaust, and
+    // a blue exhaust behind a red rocket read as two different things.
     this.trailCd -= dt;
     if (this.trailCd <= 0 && speed > 40) {
       const k = speed / MAX_SPEED;
@@ -580,7 +573,7 @@ export class DodgeGame extends BaseGame {
         0.18 + 0.2 * k,
         2 + 3.4 * k,
         0,
-        ACCENT,
+        this.booster.active ? BOOST_RED : ACCENT,
         "circle",
         false,
         0.25

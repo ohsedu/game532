@@ -27,7 +27,7 @@ const fredoka = Fredoka({
 
 const TITLE = "게임532";
 const DESCRIPTION =
-  "방향키만으로 즐기는 아케이드 미니게임 3종. 총알 피하기, 똥 피하기, 방향 사수. 점수를 기록하고 랭킹에 도전하세요.";
+  "키보드·마우스·터치로 간단하게 즐기는 미니게임 6종. 총알 피하기, 똥 피하기, 방향 사수, 블록 쌓기, 점프 러너, 타겟 사수. 점수를 기록하고 랭킹에 도전하세요.";
 
 /**
  * Absolute base for og:image and friends.
