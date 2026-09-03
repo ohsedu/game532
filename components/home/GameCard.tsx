@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import type { GameMeta } from "@/types/game";
-import { useLocalBest } from "@/lib/useLocalBest";
+import { useMyBest } from "@/lib/useMyBest";
 import type { TopScore } from "@/lib/topScores";
 import { formatScore } from "@/lib/format";
 
@@ -141,10 +141,10 @@ export default function GameCard({
   /** Best score anyone has posted, from the server. Null when none exists. */
   top: TopScore | null;
 }) {
-  // The personal best lives in localStorage, so clearing site data wipes it.
-  // The server number is the one that survives, which is why it leads here and
-  // the local one is only shown as a personal aside.
-  const mine = useLocalBest(meta.id);
+  // The account's record once signed in, this browser's before that. Shown as
+  // an aside under the leaderboard number, which is the one that stands for
+  // everybody.
+  const mine = useMyBest(meta.id);
 
   return (
     <Link

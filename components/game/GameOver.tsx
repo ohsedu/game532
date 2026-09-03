@@ -5,6 +5,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { GameId } from "@/types/game";
 import { NICKNAME_MAX } from "@/types/score";
 import { formatScore, sanitizeNickname } from "@/lib/format";
+import { noteAccountBest } from "@/lib/accountBest";
 import { getSavedNickname, saveNickname } from "@/lib/localBest";
 import { loginUrl } from "@/lib/talk";
 import { usePlayer } from "@/lib/usePlayer";
@@ -102,12 +103,18 @@ export default function GameOver({
           data && typeof data === "object" && typeof (data as { rank?: unknown }).rank === "number"
             ? (data as { rank: number }).rank
             : 0;
+        // The row just landed under this account, so fold it into the cached
+        // bests rather than asking the database for a number we already know.
+        // `auto` is exactly the server's own condition for attaching a user_id
+        // — a member with no nickname posts as a guest there too — and the fold
+        // is a no-op for anyone else.
+        if (auto) noteAccountBest(gameId, score);
         setState({ kind: "done", rank });
       } catch {
         setState({ kind: "error", message: "네트워크 오류입니다. 다시 시도해주세요." });
       }
     },
-    [gameId, score, durationMs]
+    [gameId, score, durationMs, auto]
   );
 
   function submitTyped() {

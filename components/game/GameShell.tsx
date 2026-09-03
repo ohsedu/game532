@@ -7,7 +7,7 @@ import type { HudStat } from "@/games/core/BaseGame";
 import type { AudioManager } from "@/games/core/AudioManager";
 import type { InputManager } from "@/games/core/InputManager";
 import { commitBest } from "@/lib/localBest";
-import { useLocalBest } from "@/lib/useLocalBest";
+import { useMyBest } from "@/lib/useMyBest";
 import { formatScore } from "@/lib/format";
 import GameCanvas from "./GameCanvas";
 import GameHUD from "./GameHUD";
@@ -53,9 +53,19 @@ export default function GameShell({ meta }: { meta: GameMeta }) {
   const [muted, setMuted] = useState(false);
   const [durationMs, setDurationMs] = useState(0);
 
-  // Best score is external (localStorage), so it is subscribed to rather than
-  // copied into state. commitBest notifies this subscription.
-  const best = useLocalBest(meta.id);
+  // Best score is external — the account's record, or localStorage for a guest
+  // — so it is subscribed to rather than copied into state. Both commitBest and
+  // a registered run notify this subscription.
+  const best = useMyBest(meta.id);
+
+  // handleGameOver has to compare against the best as it stood *before* the run
+  // was committed, and it cannot read `best` directly: commitBest notifies
+  // synchronously, so by the time the comparison ran the number would already
+  // include the score being judged.
+  const bestRef = useRef(best);
+  useEffect(() => {
+    bestRef.current = best;
+  }, [best]);
 
   // A phone held upright cannot show the board at a playable size, so the run
   // freezes behind the rotate prompt instead of the player dying blind.
@@ -141,7 +151,11 @@ export default function GameShell({ meta }: { meta: GameMeta }) {
     (finalScore: number, elapsedSeconds: number) => {
       endingRef.current = true;
       setDurationMs(elapsedSeconds * 1000);
-      setIsNewRecord(commitBest(meta.id, finalScore));
+      // Judged against the number on screen, which for a member is their
+      // account's. Beating a browser's stale copy is not a record when the
+      // account already holds more — and commitBest only knows about the copy.
+      setIsNewRecord(finalScore > bestRef.current);
+      commitBest(meta.id, finalScore);
       setScore(finalScore);
       // Let the death animation read before the panel covers it.
       overTimerRef.current = window.setTimeout(() => setPhase("over"), 620);
